@@ -1,4 +1,5 @@
 import { createHandpan } from "./audio/engine";
+import { attachMemory } from "./audio/memory";
 import { attachResonance } from "./audio/resonance";
 import { D_KURD, fieldsFor } from "./audio/scales";
 import type { Field, Handpan } from "./audio/types";
@@ -67,6 +68,20 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | nul
 
   context = new AudioContext({ latencyHint: "interactive" });
   pan = createHandpan(context, fields);
+
+  // Sprint 4: the instrument's memory. Attached before resonance below, and
+  // that order is load-bearing, not cosmetic: a strike notifies observers in
+  // registration order, and resonance reacts to a strike by calling
+  // pan.strike() again on its neighbours *before* the engine's own loop moves
+  // on to the next observer. Memory tells a genuine strike apart from that
+  // synchronous echo purely by timestamp (see memory.ts) — the first
+  // notification at a given instant wins, everything else at that instant is
+  // discarded. If resonance ran first, its echoes would reach memory before
+  // the real strike does, and the echo would win instead: the instrument
+  // would end up remembering a neighbour it never heard the player touch.
+  // Attaching memory first guarantees it sees the real strike itself first.
+  const memory = attachMemory(pan);
+
   // Sprint 3: sympathetic resonance. Purely a listener on top of the engine's
   // public contract — it excites related neighbours by calling pan.strike()
   // itself, so the glow (below) needs no changes to show it.
@@ -74,6 +89,18 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | nul
 
   const clock = context;
   glow = createGlow(targets, pan, () => clock.currentTime);
+
+  // Ticked every frame with the audio clock, the same way the glow above is —
+  // that is what lets it notice a pause in play and place its answer
+  // precisely, rather than drifting on a wall-clock timer. The loop never
+  // stops itself: an idle memory still has to keep checking the clock to
+  // notice the pause that would wake it, which is exactly the one case the
+  // glow's own sleep-when-silent loop does not need to handle.
+  const tickMemory = (): void => {
+    memory.tick(clock.currentTime);
+    requestAnimationFrame(tickMemory);
+  };
+  requestAnimationFrame(tickMemory);
 
   // Belt and braces: if the context starts on its own, anything held plays.
   context.addEventListener("statechange", release);

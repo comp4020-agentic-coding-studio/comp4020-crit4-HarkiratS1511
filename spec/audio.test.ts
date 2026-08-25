@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { createHandpan } from "../src/scripts/audio/engine";
+import { attachMemory } from "../src/scripts/audio/memory";
 import { attachResonance } from "../src/scripts/audio/resonance";
 import { AMARA, CELTIC_MINOR, D_KURD, fieldsFor, morph, noteName, transpose } from "../src/scripts/audio/scales";
 import { MODE_RATIOS } from "../src/scripts/audio/types";
@@ -100,6 +101,43 @@ function scheduleEach(
     });
   };
   step(0);
+}
+
+/**
+ * Run one action per event, in ascending time order, regardless of what kind
+ * of thing each event is.
+ *
+ * `scheduleEach` above assumes every event calls the same `play(when)`; a
+ * phrase-memory test needs to interleave two different kinds of event — a
+ * player's strikes, and `memory.tick()` polling the clock the way a real
+ * animation-frame loop would — at times that are not evenly spaced. This is
+ * that, generalised.
+ */
+function scheduleActions(
+  ctx: OfflineAudioContext,
+  events: readonly { when: number; run: () => void }[],
+): void {
+  const sorted = [...events].sort((a, b) => a.when - b.when);
+  const step = (i: number): void => {
+    const event = sorted[i];
+    if (!event) return;
+    void ctx.suspend(event.when).then(() => {
+      event.run();
+      step(i + 1);
+      void ctx.resume();
+    });
+  };
+  step(0);
+}
+
+/** A grid of times a real `requestAnimationFrame` loop would poll `memory.tick`
+ *  at, offset off any round number so it never lands exactly on a strike time
+ *  scheduled in the same test (two `suspend()` calls at the same instant is
+ *  not something `scheduleActions` needs to handle). */
+function pollGrid(to: number, step = 0.05): number[] {
+  const times: number[] = [];
+  for (let t = 0.025; t < to; t += step) times.push(Number(t.toFixed(3)));
+  return times;
 }
 
 function sliceOf(samples: Float32Array, from: number, to: number): Float32Array {
@@ -1059,4 +1097,245 @@ describe("sympathetic resonance", () => {
       "the whole pan struck at once, with resonance active, must still leave headroom on the bus rather than pushing it to full scale",
     ).toBeLessThan(1);
   });
+});
+
+describe("phrase memory", () => {
+  // Sprint 4's claim: the shell has a memory. Play three or more notes, pause,
+  // and it answers — quieter, on its own schedule, without ever being told to
+  // record anything.
+  //
+  // `memory.tick()` is polled here exactly the way `main.ts` polls it from
+  // `requestAnimationFrame`: at a grid of times standing in for animation
+  // frames, merged with the player's own strikes into one `scheduleActions`
+  // timeline so both advance on the same OfflineAudioContext clock. Nothing
+  // here waits on a real timer, which is what makes a ~1s pause and a further
+  // multi-second answer sequence something a headless test can drive to
+  // completion in well under a second of wall time.
+
+  /** velocity 0.8 struck three times, 0.2s apart, on the ding — short enough
+   *  to read as one phrase, long enough that ATTACK_S never overlaps between
+   *  strikes. */
+  const STRIKE = { velocity: 0.8, position: 0.3 } as const;
+  const PHRASE_TIMES = [0.1, 0.3, 0.5];
+
+  /** Fires the phrase above plus a full poll grid across `seconds`, returning
+   *  every strike the pan actually made (player's and memory's alike) so a
+   *  test can tell them apart by index or by time. */
+  async function renderPhrase(
+    seconds: number,
+  ): Promise<{ pan: Handpan; strikes: { index: number; when: number; velocity: number }[] }> {
+    const ctx = context(seconds);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    const memory = attachMemory(pan);
+
+    const strikes: { index: number; when: number; velocity: number }[] = [];
+    pan.onStrike(({ index, when, strike }) => strikes.push({ index, when, velocity: strike.velocity }));
+
+    scheduleActions(ctx, [
+      ...PHRASE_TIMES.map((when) => ({ when, run: () => pan.strike(0, STRIKE) })),
+      ...pollGrid(seconds - 0.1).map((when) => ({ when, run: () => memory.tick(when) })),
+    ]);
+    await ctx.startRendering();
+    return { pan, strikes };
+  }
+
+  it(
+    "answers a phrase of three or more strikes with strikes the player never made",
+    async () => {
+      const { pan, strikes } = await renderPhrase(7);
+
+      const later = strikes.filter((s) => s.when > 1.5);
+      expect(
+        later.length,
+        "a phrase of three strikes followed by a pause must be answered by further strikes nobody in this test made — this is the instrument's memory, and if nothing appears here it did not respond at all",
+      ).toBeGreaterThan(0);
+
+      // The task's own way of checking this in a browser is watching --amp
+      // rise on a field nobody clicked; amplitudeAt() is the exact number
+      // that CSS property is set from, so this is the same check.
+      let excitedElsewhere = false;
+      for (const index of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        for (const when of [2, 2.5, 3, 3.5, 4, 4.5, 5]) {
+          if (pan.amplitudeAt(index, when) > 0.01) excitedElsewhere = true;
+        }
+      }
+      expect(
+        excitedElsewhere,
+        "the answer is described as shifting to a harmonically related field, so at least one field other than the one the player struck must show a real amplitude rise well after the phrase ended",
+      ).toBe(true);
+    },
+    30000,
+  );
+
+  it(
+    "stays silent after fewer than three strikes, however long the pause",
+    async () => {
+      const ctx = context(6);
+      const pan = createHandpan(ctx, fieldsFor(D_KURD));
+      const memory = attachMemory(pan);
+
+      const strikes: { when: number }[] = [];
+      pan.onStrike(({ when }) => strikes.push({ when }));
+
+      scheduleActions(ctx, [
+        { when: 0.1, run: () => pan.strike(0, STRIKE) },
+        { when: 0.4, run: () => pan.strike(3, STRIKE) },
+        ...pollGrid(5.9).map((when) => ({ when, run: () => memory.tick(when) })),
+      ]);
+      await ctx.startRendering();
+
+      expect(
+        strikes.length,
+        `two strikes and a long silence must never be answered — a phrase needs at least three, and this test made ${strikes.length}, so any extra strike here is the memory firing on too little`,
+      ).toBe(2);
+    },
+    30000,
+  );
+
+  it(
+    "stays silent through continuous play that never actually pauses",
+    async () => {
+      const ctx = context(1.9);
+      const pan = createHandpan(ctx, fieldsFor(D_KURD));
+      const memory = attachMemory(pan);
+
+      const strikes: { when: number }[] = [];
+      pan.onStrike(({ when }) => strikes.push({ when }));
+
+      const playTimes = [0.1, 0.4, 0.7, 1.0, 1.3];
+      scheduleActions(ctx, [
+        ...playTimes.map((when) => ({ when, run: () => pan.strike(0, STRIKE) })),
+        ...pollGrid(1.85).map((when) => ({ when, run: () => memory.tick(when) })),
+      ]);
+      await ctx.startRendering();
+
+      expect(
+        strikes.length,
+        `five strikes each 0.3s apart never leave the ~800ms gap a phrase boundary needs, so nothing extra should sound; this test made ${playTimes.length} strikes and the pan reported ${strikes.length}`,
+      ).toBe(playTimes.length);
+    },
+    30000,
+  );
+
+  it(
+    "answers substantially quieter than the phrase that prompted it",
+    async () => {
+      const { pan, strikes } = await renderPhrase(7);
+      const played = strikes.find((s) => s.when <= 1);
+      const answered = strikes.find((s) => s.when > 1.5);
+      expect(
+        played && answered,
+        "this test needs both a player strike and an answering strike to compare; if either is missing the render above is broken, not this assertion",
+      ).toBeTruthy();
+      if (!played || !answered) return;
+
+      const playedLevel = pan.amplitudeAt(played.index, played.when + 0.02);
+      const answeredLevel = pan.amplitudeAt(answered.index, answered.when + 0.02);
+      expect(
+        answeredLevel,
+        `the brief calls for the answer at roughly 30-40% of the original velocity; the player's strike reported amplitude ${playedLevel.toFixed(3)} and the answer ${answeredLevel.toFixed(3)}, which is not substantially quieter`,
+      ).toBeLessThan(playedLevel * 0.5);
+    },
+    30000,
+  );
+
+  it(
+    "produces a finite number of answering strikes and never lets one of its own seed a new phrase",
+    async () => {
+      const { strikes } = await renderPhrase(9);
+
+      // Exactly: 3 played, then MAX_REPEATS capped by GAIN_FLOOR to 3 full
+      // repeats of the 3-strike phrase = 9 memory strikes. Written out rather
+      // than derived from the module's own constants, the way D_KURD_SEMITONES
+      // above is kept independent of the scale table it is checked against —
+      // this is the number a listener would actually hear, and the number
+      // that would silently drift if MAX_REPEATS or GAIN_FLOOR moved without
+      // anyone noticing what it did to how long the instrument keeps talking.
+      expect(
+        strikes.length,
+        `a single three-note phrase must produce a bounded, specific number of strikes — 3 played plus a fading run of answers — but this render produced ${strikes.length}. More than that means the memory is not stopping on its own; fewer means it answered less than the phrase promised`,
+      ).toBe(12);
+
+      // If a memory strike could seed a new phrase, the gap between the end
+      // of one repeat and the start of the next (duration + REPEAT_GAP_S,
+      // comfortably past the ~800ms pause threshold) would itself look like a
+      // pause after a real phrase, and every repeat would spawn another —
+      // forever, since nothing in that loop would ever fall quiet on its own.
+      // Rendering nine full seconds — several times longer than the exact
+      // answer this test asserts above needs — is what would catch that:
+      // more strikes than the fixed count above appear the moment the
+      // feedback guard in memory.ts (the `echoing` flag around `pan.strike()`)
+      // is disabled, confirmed by hand while building this test.
+      expect(
+        strikes.every((s) => s.when < 6),
+        "every strike this phrase produces, including its fading answers, must land well inside the render — one still arriving near the end of nine seconds of silence would mean the memory never actually stopped",
+      ).toBe(true);
+    },
+    30000,
+  );
+
+  it(
+    "stays finite when resonance and memory are both listening to the same strikes",
+    async () => {
+      // The adversarial combination the brief calls out by name: every memory
+      // strike also excites sympathetic neighbours (resonance.ts), and every
+      // one of those sympathetic strikes is itself a notification memory's
+      // own onStrike observer sees. If the `echoing` guard only caught
+      // memory's own strikes and not what resonance does in response to them,
+      // this is where it would show up — as runaway strikes or a non-finite
+      // sample, not as a subtle loudness problem.
+      const ctx = context(9);
+      const pan = createHandpan(ctx, fieldsFor(D_KURD));
+      // Registration order matters here and mirrors main.ts: memory has to be
+      // attached before resonance so it always sees a real strike before
+      // resonance's synchronous echo of it (see the comment in main.ts).
+      const memory = attachMemory(pan);
+      attachResonance(pan);
+
+      const strikes: { index: number; when: number; velocity: number }[] = [];
+      pan.onStrike(({ index, when, strike }) => strikes.push({ index, when, velocity: strike.velocity }));
+
+      scheduleActions(ctx, [
+        ...PHRASE_TIMES.map((when) => ({ when, run: () => pan.strike(0, STRIKE) })),
+        ...pollGrid(8.9).map((when) => ({ when, run: () => memory.tick(when) })),
+      ]);
+      const samples = (await ctx.startRendering()).getChannelData(0);
+
+      const broken = samples.findIndex((sample) => !Number.isFinite(sample));
+      expect(
+        broken,
+        `every sample must stay finite with resonance and memory both active; sample ${broken} was ${samples[broken]}`,
+      ).toBe(-1);
+      expect(
+        peak(samples),
+        "resonance riding on top of an already-quiet memory answer must still leave headroom, not push the bus toward clipping",
+      ).toBeLessThan(1);
+      expect(
+        strikes.length,
+        `resonance excites neighbours on every strike including the memory's own, so this must produce more notifications than the memory alone would (12) but still a bounded number, not an unbounded cascade; got ${strikes.length}`,
+      ).toBeLessThan(80);
+
+      // Fidelity, not just safety: field 0 (the ding, D3) is a fifth or less
+      // from four other fields, so resonance excites several of them on
+      // every real strike, each arriving at memory's observer at the same
+      // instant as the real strike. If memory ever mistook one of those
+      // quiet echoes (5-15% of the real strike's velocity) for the phrase
+      // itself, its answer would be built from that echo's own velocity and
+      // its own harmonic relation (field 1's, an octave away, is field 8 —
+      // not field 4), not the ding's. A strike this loud, this late, could
+      // only be memory's own direct answer to the ding — resonance alone
+      // never rings anything above its own ~15% ceiling of whatever excited
+      // it, which after even one octave-shift and one decay is nowhere near
+      // this loud. So finding it, and finding it on field 4 specifically,
+      // is what confirms memory captured the real strike, not an echo.
+      const strongLateStrike = strikes.find((s) => s.when > 2 && s.velocity > 0.2);
+      expect(
+        strongLateStrike?.index,
+        `expected a strong late strike on field 4 (the ding's own harmonic relation) as memory's direct answer to the phrase; ` +
+          `${strongLateStrike ? `found one on field ${strongLateStrike.index} instead` : "found none at all"} — ` +
+          "either memory captured a resonance echo instead of the real strike, or answered the wrong field",
+      ).toBe(4);
+    },
+    30000,
+  );
 });
