@@ -5,6 +5,10 @@
  * operated. The only colour that is not steel is the glow, and that is because
  * it is not decoration: it is the note's own amplitude, written to --amp on
  * every animation frame by the same envelope that drives the gain.
+ *
+ * There is one light in this room and it is up and to the left. Every piece of
+ * shading below is derived from that one fact, because the difference between
+ * a dome and a dent is nothing but which side of it the light lands on.
  */
 
 :root {
@@ -97,64 +101,133 @@ h1 {
 .stage {
   display: grid;
   place-items: center;
-  padding: 1rem;
+  padding: clamp(0.5rem, 2vmin, 1rem);
+  min-height: 0;
 
-  /* Ripples travel past the rim of the shell; clip keeps them from ever
-     inventing a scrollbar, without making this a scroll container. */
+  /* Ripples and bloom travel past the rim of the shell; clip keeps them from
+     ever inventing a scrollbar, without making this a scroll container. */
   overflow: clip;
 }
 
+/*
+ * The body of the instrument: a convex dome bulging toward the viewer.
+ *
+ * It has to read as curved *outward* for the craters to read as pressed
+ * *into* something, so its shading is the exact opposite of theirs — bright on
+ * the upper left where the light lands square on it, falling away to the lower
+ * right as the surface turns from the light, with the ground shadow thrown
+ * down and away.
+ */
 .shell {
+  /*
+   * One length that everything on the pan is a fraction of.
+   *
+   * Width, height and a hard cap, in that order: on a phone the pan runs
+   * nearly the full width so it can be played with one thumb, on a laptop the
+   * short axis is the height and it fills that instead, and on a big monitor
+   * it stops growing before it becomes a novelty. That is the whole of the
+   * responsive story — no breakpoint, and the pan is circular at every size
+   * because everything inside it is a fraction of this.
+   */
+  --pan: min(90vw, 76vh, 52rem);
+
   position: relative;
-  width: min(80vmin, 40rem);
+  width: var(--pan);
   aspect-ratio: 1;
   border-radius: 50%;
 
-  /* Layered like the real surface is made: a fine lathe-turned texture over a
-     broad sheen over the shading of a dome lit from the upper left. */
+  /* The whole shell is a playing surface: a finger dragged across it is a
+     rake, not a page scroll, and a second finger is a chord, not a pinch. */
+  touch-action: none;
+
   background:
+    /* the lathe marks, turned into the steel */
     repeating-radial-gradient(
       circle at 50% 50%,
       rgb(255 255 255 / 3.5%) 0 1px,
       rgb(0 0 0 / 3%) 1px 2px,
       rgb(0 0 0 / 0%) 2px 7px
     ),
-    conic-gradient(
-      from 200deg,
-      rgb(255 255 255 / 7%),
-      rgb(0 0 0 / 0%) 22%,
-      rgb(255 255 255 / 4%) 48%,
-      rgb(0 0 0 / 0%) 72%,
-      rgb(255 255 255 / 8%)
+    /* the specular hit, where the light is square on the dome */
+    radial-gradient(
+      circle at 31% 20%,
+      rgb(255 255 255 / 36%) 0%,
+      rgb(255 255 255 / 8%) 13%,
+      rgb(255 255 255 / 0%) 29%
     ),
-    radial-gradient(circle at 36% 24%, var(--steel-lit) 0%, var(--steel-mid) 46%, var(--steel-dark) 100%);
+    /* cold bounce off the floor, catching the underside of the curve */
+    radial-gradient(circle at 70% 95%, rgb(150 182 214 / 20%) 0%, rgb(0 0 0 / 0%) 25%),
+    /* the shoulder: a sphere darkens toward *every* edge, because that is
+       where the surface has turned furthest from the viewer. Without this the
+       dome flattens back into a plate however hard the highlight works. */
+    radial-gradient(
+      circle at 50% 50%,
+      rgb(0 0 0 / 0%) 58%,
+      rgb(0 0 0 / 22%) 82%,
+      rgb(0 0 0 / 45%) 100%
+    ),
+    /* and the body of the dome itself, turning away to the lower right and
+       falling into the dark long before it reaches that edge */
+    radial-gradient(
+      circle at 34% 25%,
+      #909ca8 0%,
+      var(--steel-lit) 12%,
+      #5a646f 33%,
+      var(--steel-mid) 58%,
+      #232a33 82%,
+      var(--steel-dark) 100%
+    );
   box-shadow:
-    inset 0 3px 2px rgb(255 255 255 / 20%),
-    inset 0 -40px 70px rgb(0 0 0 / 60%),
-    0 40px 90px rgb(0 0 0 / 70%),
-    0 0 0 1px rgb(0 0 0 / 70%);
+    /* the far side of the dome, rolling out of the light */
+    inset calc(var(--pan) * -0.045) calc(var(--pan) * -0.06) calc(var(--pan) * 0.15) rgb(0 0 0 / 68%),
+    /* the near shoulder, still in it */
+    inset calc(var(--pan) * 0.025) calc(var(--pan) * 0.03) calc(var(--pan) * 0.08) rgb(255 255 255 / 10%),
+    inset 0 2px 1px rgb(255 255 255 / 22%),
+    0 0 0 1px rgb(0 0 0 / 78%),
+    /* thrown down and away from the light, which is what says "this is in
+       front of the background" rather than "this is a hole in it" */
+    0 calc(var(--pan) * 0.06) calc(var(--pan) * 0.14) rgb(0 0 0 / 78%);
 }
 
-/* The turned rim: a bright arc where the light catches the folded edge. */
+/*
+ * The rim light: the sliver of light that skims round the far edge of a
+ * curved body and separates it from the dark behind it. It is the single
+ * strongest cue that the shell bulges toward the viewer, and it has to sit
+ * *under* the fields — ::before, so it paints before the buttons do.
+ */
+.shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset calc(var(--pan) * -0.02) calc(var(--pan) * -0.028) calc(var(--pan) * 0.022)
+    calc(var(--pan) * -0.019) rgb(206 228 250 / 38%);
+  pointer-events: none;
+}
+
+/* The turned rim: a bright hairline where the light catches the folded edge. */
 .shell::after {
   content: "";
   position: absolute;
-  inset: 3.4%;
+  inset: 2.4%;
   border-radius: 50%;
   border: 1px solid var(--rim);
-  background: radial-gradient(circle at 50% 120%, rgb(255 255 255 / 6%), rgb(0 0 0 / 0%) 52%);
   pointer-events: none;
 }
 
 /* ----------------------------------------------------------------- field  */
 
 .field {
+  /* The field's own diameter, as a length, so its shading, its stamp and its
+     invitation are all fractions of it and shrink together. */
+  --dish: calc(var(--pan, 30rem) * var(--sizen, 0.28));
+
   position: absolute;
-  /* Each button carries its own place on the shell as custom properties, set
-     from the field list at build time; these are the ding's, as a fallback. */
+  /* Each button carries its place on the shell as custom properties, stamped
+     in from the layout module at build time; these are the ding's. */
   left: var(--fx, 50%);
   top: var(--fy, 50%);
-  width: var(--size, 38%);
+  width: var(--dish);
   aspect-ratio: 1;
   margin: 0;
   padding: 0;
@@ -164,14 +237,21 @@ h1 {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  touch-action: manipulation;
+  touch-action: none;
   user-select: none;
   -webkit-tap-highlight-color: rgb(0 0 0 / 0%);
-  transform: translate(-50%, -50%) scale(calc(1 + var(--amp) * 0.022));
 
-  /* The bloom: light spilling off the field onto the shell around it. Amplitude
-     drives it, so it swells and dies with the note. */
-  filter: drop-shadow(0 0 calc(var(--amp) * 3.5rem) rgb(var(--ember) / calc(var(--amp) * 0.5)));
+  /*
+   * A struck dent does not swell. It is a hollow, and the energy in it is
+   * light, not volume — so the only movement is a hair further in, and
+   * everything else the strike does is done with brightness.
+   */
+  transform: translate(-50%, -50%) scale(calc(1 - var(--amp) * 0.014));
+
+  /* The bloom: light spilling up out of the hollow onto the shell around it. */
+  filter: drop-shadow(
+    0 0 calc(var(--dish) * var(--amp) * 0.75) rgb(var(--ember) / calc(var(--amp) * 0.45))
+  );
 }
 
 .field:focus-visible {
@@ -179,102 +259,193 @@ h1 {
   outline-offset: clamp(3px, 0.9vmin, 7px);
 }
 
-/* The dome. A handpan's fields are raised, not dished, and the shading has to
-   say so or the whole thing reads as a flat disc with buttons on it. */
+/*
+ * The crater.
+ *
+ * A tone field is a shallow dimple hammered *into* the shell, and the whole
+ * difference between a dimple and a blister is which inner wall the light
+ * finds. With the light up and to the left:
+ *
+ *   - the upper-left inner edge is in shadow. The rim above it is between that
+ *     wall and the light, so nothing reaches it.
+ *   - the lower-right inner wall is lit. It faces back up toward the light,
+ *     and it is the one surface in the hollow the light lands square on.
+ *
+ * That is the exact inverse of a dome, and it is the entire trick: inset
+ * shadows dark from the top left, light from the bottom right. Get those two
+ * lines the wrong way round and the same geometry reads as a button sitting on
+ * a plate — which is what this looked like before.
+ */
 .face {
   position: absolute;
   inset: 0;
   border-radius: 50%;
+
+  /* Each dent is lit by how far its patch of the dome has turned toward the
+     lamp, which is what keeps nine identical craters from reading as nine
+     holes punched in a flat plate. */
+  filter: brightness(calc(0.82 + var(--lit, 0.5) * 0.36));
   background:
-    radial-gradient(circle at 34% 24%, rgb(255 255 255 / 30%), rgb(0 0 0 / 0%) 44%),
-    radial-gradient(circle at 52% 122%, rgb(255 255 255 / 10%), rgb(0 0 0 / 0%) 40%),
-    linear-gradient(155deg, #7b8794 0%, #3a434e 48%, #1b212a 100%);
+    /* lathe marks continue down into the hollow */
+    repeating-radial-gradient(
+      circle at 50% 50%,
+      rgb(255 255 255 / 2.5%) 0 1px,
+      rgb(0 0 0 / 2.5%) 1px 2px,
+      rgb(0 0 0 / 0%) 2px 6px
+    ),
+    /* the lit far wall — light coming over the near rim lands here, and it is
+       broad, because this is a shallow dish and not a drilled hole */
+    radial-gradient(circle at 69% 76%, rgb(202 220 238 / 42%) 0%, rgb(255 255 255 / 0%) 54%),
+    /* the occluded near wall, where the rim is in the way */
+    radial-gradient(circle at 26% 20%, rgb(0 0 0 / 56%) 0%, rgb(0 0 0 / 0%) 58%),
+    /* and the pool of shade the whole hollow sits in: darkest at the bottom of
+       the dish, lifting toward the rim it was pressed out of */
+    radial-gradient(circle at 50% 50%, #232a33 0%, #333b46 56%, #4a5462 100%);
   box-shadow:
-    inset 0 2px 0 rgb(255 255 255 / 28%),
-    inset 0 -16px 30px rgb(0 0 0 / 55%),
-    0 16px 38px rgb(0 0 0 / 60%),
-    0 0 calc(0.6rem + var(--amp) * 6rem) rgb(var(--ember) / calc(var(--amp) * 0.65));
+    /* the shadow the upper-left rim throws down into the dish */
+    inset calc(var(--dish) * 0.09) calc(var(--dish) * 0.115) calc(var(--dish) * 0.2)
+      calc(var(--dish) * -0.02) rgb(0 0 0 / 74%),
+    /* the same, thrown further and softer, so the hollow has depth and not
+       just an edge */
+    inset calc(var(--dish) * 0.2) calc(var(--dish) * 0.26) calc(var(--dish) * 0.42)
+      calc(var(--dish) * -0.2) rgb(0 0 0 / 58%),
+    /* the bright inner wall opposite it */
+    inset calc(var(--dish) * -0.075) calc(var(--dish) * -0.095) calc(var(--dish) * 0.17)
+      calc(var(--dish) * -0.03) rgb(214 230 245 / 38%),
+    /* warm light gathering on that same lit wall as the note rings — energy in
+       the hollow, which is the only thing a hollow can do */
+    inset calc(var(--dish) * -0.05) calc(var(--dish) * -0.07)
+      calc(var(--dish) * (0.1 + var(--amp) * 0.34)) calc(var(--dish) * -0.02)
+      rgb(var(--ember) / calc(var(--amp) * 0.7)),
+    /* the cut where the dimple meets the shell */
+    inset 0 0 0 1px rgb(0 0 0 / 34%);
 }
 
-/* The note itself, made visible. Opacity is the live amplitude, so this fades
-   over exactly as long as the note rings. */
+/*
+ * The note itself, made visible. Opacity is the live amplitude, so this fades
+ * over exactly as long as the note rings.
+ *
+ * It is centred low and right — light pools where the light already is — and
+ * it screens, so it can only ever brighten. The occluded near wall therefore
+ * survives the loudest strike, and a ringing field still reads as a hollow
+ * full of light rather than as a lamp stuck on the steel.
+ */
 .face::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: 50%;
   background: radial-gradient(
-    circle at 50% 46%,
-    rgb(255 236 210 / 78%) 0%,
-    rgb(var(--ember) / 55%) 34%,
-    rgb(255 132 48 / 22%) 62%,
-    rgb(0 0 0 / 0%) 80%
+    circle at 58% 64%,
+    rgb(255 228 190 / 88%) 0%,
+    rgb(var(--ember) / 80%) 22%,
+    rgb(255 124 40 / 46%) 46%,
+    rgb(0 0 0 / 0%) 68%
   );
   opacity: var(--amp);
   mix-blend-mode: screen;
   pointer-events: none;
 }
 
-/* Makers stamp the note into the shell beside the field. So does this. */
+/* Makers stamp the note into the steel. So does this — inside the dish, where
+   it cannot collide with the eight neighbours a sprint-0 field did not have. */
 .stamp {
   position: absolute;
+  z-index: 2;
   left: 50%;
-  bottom: -1.9em;
-  transform: translateX(-50%);
-  font-size: clamp(0.62rem, 1.6vmin, 0.8rem);
-  letter-spacing: 0.32em;
-  text-indent: 0.32em;
-  color: rgb(219 227 234 / 62%);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: max(0.44rem, calc(var(--dish) * 0.185));
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  color: rgb(219 227 234 / 46%);
   text-shadow: 0 1px 0 rgb(0 0 0 / 70%);
   pointer-events: none;
   white-space: nowrap;
 }
 
+/*
+ * The key this field answers to.
+ *
+ * Hidden on the cold-open page: a stranger is meant to reach out and hit the
+ * thing, and a grid of letters would turn an instrument into a diagram. It
+ * fades in the first time anybody touches a keyboard, which is the moment it
+ * stops being clutter and becomes the map. aria-hidden, because the accessible
+ * name is the note and the shortcut is already on aria-keyshortcuts.
+ */
+.cue {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 13%;
+  transform: translateX(-50%);
+  font-size: max(0.38rem, calc(var(--dish) * 0.14));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--ember) / 62%);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+  opacity: 0;
+  transition: opacity 260ms ease;
+  pointer-events: none;
+}
+
+body[data-keys] .cue {
+  opacity: 1;
+}
+
 /* -------------------------------------------------------------- invitation */
 
 /*
- * Before the first strike the field pulses, slowly, the way a struck bell that
- * has not yet been struck would if it could. It is the whole of the opening
- * screen's instruction: no words, no "click to start", just the one thing on
- * screen behaving as though it is waiting for a hand. It stops for good the
- * moment it is played.
+ * Before the first strike each hollow draws a ring inward, slowly, the way
+ * water would run down into it. It is the whole of the opening screen's
+ * instruction: no words, no "click to start", just nine dents on a dome
+ * behaving as though they are waiting for a hand. Staggered by position in the
+ * scale, so the pan breathes as one object and not as nine; it stops for good
+ * the moment it is played.
  */
 .field::before {
   content: "";
   position: absolute;
-  inset: -10%;
+  inset: 7%;
   border-radius: 50%;
-  border: 2px solid rgb(var(--ember) / 75%);
-  box-shadow: 0 0 1.6rem rgb(var(--ember) / 30%);
+
+  /* Inside the dish, so nine invitations do not overlap each other the way one
+     field's could afford to — and above it, because ::before paints before
+     .face and would otherwise be buried under the steel. */
+  z-index: 1;
+  border: max(1px, calc(var(--dish) * 0.028)) solid rgb(var(--ember) / 70%);
+  box-shadow: 0 0 calc(var(--dish) * 0.2) rgb(var(--ember) / 26%);
   opacity: 0;
   pointer-events: none;
 }
 
 body:not([data-played]) .field::before {
-  animation: invite 3.6s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+  animation: invite 4s cubic-bezier(0.25, 0.6, 0.35, 1) infinite;
+  animation-delay: calc(var(--seq, 0) * 0.11s);
 }
 
 /* The same warm layer a strike lights up, breathing faintly. Waiting and being
    played are then the same gesture at two intensities, which is how the field
    teaches what it does without a word of instruction. */
 body:not([data-played]) .face::after {
-  animation: waiting 3.6s ease-in-out infinite;
+  animation: waiting 4s ease-in-out infinite;
+  animation-delay: calc(var(--seq, 0) * 0.11s);
 }
 
 @keyframes invite {
   0% {
     opacity: 0;
-    transform: scale(0.92);
+    transform: scale(1.04);
   }
 
-  16% {
-    opacity: 0.8;
+  18% {
+    opacity: 0.75;
   }
 
-  72%,
+  66%,
   100% {
     opacity: 0;
-    transform: scale(1.5);
+    transform: scale(0.26);
   }
 }
 
@@ -285,7 +456,7 @@ body:not([data-played]) .face::after {
   }
 
   20% {
-    opacity: 0.26;
+    opacity: 0.15;
   }
 
   70% {
@@ -315,7 +486,8 @@ body:not([data-played]) .face::after {
 @media (prefers-reduced-motion: reduce) {
   body:not([data-played]) .field::before {
     animation: none;
-    opacity: 0.6;
+    opacity: 0.55;
+    transform: scale(0.72);
   }
 
   body:not([data-played]) .face::after {

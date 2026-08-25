@@ -77,6 +77,30 @@ function scheduleAt(ctx: OfflineAudioContext, when: number, play: () => void): v
   });
 }
 
+/**
+ * Run `play` at each of `times`, in order.
+ *
+ * `web-audio-engine` allows only one outstanding `suspend()` at a time, so each
+ * callback schedules the next one rather than queueing them all up front. This
+ * is what lets a test hammer the pan over several seconds of a single render.
+ */
+function scheduleEach(
+  ctx: OfflineAudioContext,
+  times: readonly number[],
+  play: (when: number) => void,
+): void {
+  const step = (i: number): void => {
+    const when = times[i];
+    if (when === undefined) return;
+    void ctx.suspend(when).then(() => {
+      play(when);
+      step(i + 1);
+      void ctx.resume();
+    });
+  };
+  step(0);
+}
+
 function sliceOf(samples: Float32Array, from: number, to: number): Float32Array {
   const a = Math.max(0, Math.round(from * SR));
   const b = Math.min(samples.length, Math.round(to * SR));
@@ -135,8 +159,101 @@ function spectralShape(samples: Float32Array, fundamental: number): number[] {
   return total > 0 ? partials.map((value) => value / total) : partials;
 }
 
+/**
+ * The loudest frequency in `samples` between `low` and `high` Hz.
+ *
+ * A pitch read out of the audio with no reference to what the pitch was
+ * supposed to be — a coarse sweep across the band, then a fine sweep around
+ * the winner. That independence is the point: a test that measured only at the
+ * frequency the scale module nominated could not tell a pan tuned to the wrong
+ * scale from one tuned to the right one, because it would be asking the wrong
+ * question at every candidate.
+ */
+function dominantPitch(samples: Float32Array, low: number, high: number): number {
+  let best = low;
+  let loudest = -1;
+  // 2Hz over a half-second Hann window, whose main lobe is about 8Hz wide, so
+  // the coarse pass cannot step over a peak.
+  for (let hz = low; hz <= high; hz += 2) {
+    const level = magnitudeAt(samples, hz);
+    if (level > loudest) {
+      loudest = level;
+      best = hz;
+    }
+  }
+  for (let hz = best - 3; hz <= best + 3; hz += 0.05) {
+    const level = magnitudeAt(samples, hz);
+    if (level > loudest) {
+      loudest = level;
+      best = hz;
+    }
+  }
+  return best;
+}
+
+/** Interval between two frequencies, in semitones. */
+function semitonesBetween(from: number, to: number): number {
+  return 12 * Math.log2(to / from);
+}
+
+/**
+ * Whether a strike on a field at `fundamental` genuinely puts energy at `hz`
+ * because `hz` is one of that field's own *upper* modes.
+ *
+ * D4 is the ding's octave and A4 is its compound fifth, so those fields really
+ * do share partials — that is what a handpan scale is for. A test that
+ * demanded silence at every other field's fundamental would be asserting the
+ * physics away.
+ *
+ * The 1x mode is excluded on purpose. Two fields at the same fundamental are
+ * not sharing a partial, they are the same note, and forgiving that would make
+ * a pan with nine identical fields pass the test whose entire job is to catch
+ * exactly that.
+ */
+function sharesAnUpperPartial(fundamental: number, hz: number): boolean {
+  return MODE_RATIOS.some(
+    (ratio) => ratio > 1 && Math.abs(semitonesBetween(hz, fundamental * ratio)) < 0.25,
+  );
+}
+
 const FIELDS = fieldsFor(D_KURD);
 const DING = FIELDS[0];
+
+/**
+ * A D Kurd pan's intervals, in semitones above the ding, written out here
+ * rather than read from `D_KURD.offsets`.
+ *
+ * Deliberate duplication. Measuring the rendered audio against the same table
+ * the engine tuned itself from could only ever prove the two agree; it could
+ * not catch the table being wrong, which is the failure that would ship a pan
+ * in the wrong scale with every test green.
+ */
+const D_KURD_SEMITONES = [0, 7, 8, 10, 12, 14, 15, 17, 19];
+
+/** D3, the ding of a D Kurd pan. Also written out on purpose. */
+const D3_HZ = 146.83;
+
+/** The band a D Kurd pan's nine fundamentals live in, wide enough that a pitch
+ *  can be found in it without being told where to look. */
+const PITCH_BAND = { low: 120, high: 500 };
+
+/** One render per field, struck identically, computed once and shared. Dead
+ *  centre because that is the strike that leans hardest on the fundamental,
+ *  which is what these tests are trying to identify. */
+let eachFieldStruck: Promise<Float32Array[]> | null = null;
+function strikeEveryField(): Promise<Float32Array[]> {
+  eachFieldStruck ??= (async () => {
+    const renders: Float32Array[] = [];
+    for (let index = 0; index < FIELDS.length; index += 1) {
+      const { samples } = await render(1.5, (pan) =>
+        pan.strike(index, { velocity: 0.8, position: 0 }),
+      );
+      renders.push(samples);
+    }
+    return renders;
+  })();
+  return eachFieldStruck;
+}
 
 describe("the offline audio harness", () => {
   // Everything below this point is only worth reading if these pass: they are
@@ -643,4 +760,184 @@ describe("the handpan engine", () => {
       ).toBeLessThan(1);
     }
   });
+});
+
+describe("the whole pan", () => {
+  // Sprint 1 turns one excellent note into an instrument. The engine tests
+  // above prove a field sounds; these prove there are nine of them, that they
+  // are the nine notes of a D Kurd pan, and that they can be played together —
+  // which is the thing a single field could never demonstrate and the reason
+  // the sprint exists.
+
+  it("gives all nine fields a pitch of their own", async () => {
+    // Nine buttons wired to one voice, or nine voices all tuned to the ding,
+    // would pass every structural check in the suite and sound like a doorbell.
+    const renders = await strikeEveryField();
+
+    for (let index = 0; index < FIELDS.length; index += 1) {
+      const field = FIELDS[index];
+      const first = sliceOf(renders[index], 0, 1);
+      const own = magnitudeAt(first, field.frequency);
+
+      // A frequency that sits between this field's own modes, so nothing the
+      // engine synthesises for this strike should land near it.
+      const floor = magnitudeAt(first, field.frequency * 1.45);
+      expect(
+        own,
+        `striking field ${index} must sound ${field.name} (${field.frequency.toFixed(1)}Hz), the note its button announces to a screen reader`,
+      ).toBeGreaterThan(floor * 100);
+
+      const all = FIELDS.map((other) => magnitudeAt(first, other.frequency));
+      expect(
+        own,
+        `field ${index} must sound ${field.name} more strongly than it sounds any other note of the pan, or the shell is stamped with one note and ringing with another`,
+      ).toBe(Math.max(...all));
+
+      for (const other of FIELDS) {
+        if (other.index === index) continue;
+        // Skipped only where the two fields genuinely share an upper partial:
+        // D4 is the ding's octave, A4 its compound fifth, and striking the
+        // ding really does put energy at both. A second field on the same
+        // fundamental is never skipped — that is the case this test is for.
+        if (sharesAnUpperPartial(field.frequency, other.frequency)) continue;
+        expect(
+          own / magnitudeAt(first, other.frequency),
+          `striking field ${index} (${field.name}) must not sound field ${other.index} (${other.name}) — nine fields that bleed into each other are one voice with nine labels`,
+        ).toBeGreaterThan(100);
+      }
+    }
+  }, 60000);
+
+  it("ascends from the ding in the intervals of a D Kurd pan", async () => {
+    // Measured out of the rendered samples, not read off the scale table: each
+    // field's pitch is found by sweeping the band a pan lives in and taking
+    // the loudest frequency, then the intervals between those measurements are
+    // compared with D Kurd's. This is the assertion that a player hears the
+    // scale the instrument claims to be in.
+    const renders = await strikeEveryField();
+    const heard = renders.map((samples) =>
+      dominantPitch(sliceOf(samples, 0.02, 0.52), PITCH_BAND.low, PITCH_BAND.high),
+    );
+
+    expect(
+      Math.abs(semitonesBetween(D3_HZ, heard[0])),
+      `the ding of a D Kurd pan is D3 (${D3_HZ}Hz), but the centre field rendered at ${heard[0].toFixed(2)}Hz — the whole instrument is pitched off this note`,
+    ).toBeLessThan(0.25);
+
+    for (let index = 1; index < heard.length; index += 1) {
+      expect(
+        heard[index],
+        `the pan must ascend from the ding outwards, but field ${index} rendered at ${heard[index].toFixed(2)}Hz, no higher than field ${index - 1} at ${heard[index - 1].toFixed(2)}Hz — a player running a scale up the shell would hear it fall`,
+      ).toBeGreaterThan(heard[index - 1]);
+    }
+
+    const intervals = heard.map((hz) => semitonesBetween(heard[0], hz));
+    for (let index = 0; index < intervals.length; index += 1) {
+      expect(
+        Math.abs(intervals[index] - D_KURD_SEMITONES[index]),
+        `field ${index} of a D Kurd pan sits ${D_KURD_SEMITONES[index]} semitones above the ding, but this one rendered ${intervals[index].toFixed(2)} semitones above it — the instrument is in some other scale than the one it says it is`,
+      ).toBeLessThan(0.1);
+    }
+
+    expect(
+      [...D_KURD.offsets],
+      "the scale table and the audio must be describing the same instrument; if this fails while the rendered intervals above passed, the pan is in tune and the table is what moved",
+    ).toEqual(D_KURD_SEMITONES);
+  }, 60000);
+
+  it("sounds every note of a chord struck at once", async () => {
+    // The musical thing sprint 1 unlocks. One field can only ever be a note;
+    // three fields struck together are a chord, and the test that matters is
+    // that all three are still there in the same instant of audio — not that
+    // the last one struck stole the voice, and not that the first one blocked
+    // the rest.
+    const chord = [0, 3, 5];
+    const struck = chord.map((index) => FIELDS[index]);
+    const strike = { velocity: 0.8, position: 0.3 };
+
+    const alone: number[] = [];
+    for (const field of struck) {
+      const { samples } = await render(2, (pan) => pan.strike(field.index, strike));
+      alone.push(magnitudeAt(sliceOf(samples, 0, 1.5), field.frequency));
+    }
+
+    const { samples } = await render(2, (pan) => {
+      for (const field of struck) pan.strike(field.index, strike);
+    });
+    const together = sliceOf(samples, 0, 1.5);
+
+    struck.forEach((field, i) => {
+      const heard = magnitudeAt(together, field.frequency);
+      const floor = magnitudeAt(together, field.frequency * 1.45);
+
+      expect(
+        heard,
+        `${struck.map((f) => f.name).join(" + ")} struck together must put real energy at ${field.name} (${field.frequency.toFixed(1)}Hz) — a chord that only sounds one of its notes is a monophonic instrument with extra buttons`,
+      ).toBeGreaterThan(floor * 100);
+
+      expect(
+        heard / alone[i],
+        `${field.name} must be as loud inside the chord as it is on its own; it came out at ${((heard / alone[i]) * 100).toFixed(0)}% of its solo level, which means playing another field steals from it`,
+      ).toBeGreaterThan(0.8);
+      expect(
+        heard / alone[i],
+        `${field.name} must not be louder inside the chord than on its own; at ${((heard / alone[i]) * 100).toFixed(0)}% of its solo level something is stacking voices rather than summing three independent fields`,
+      ).toBeLessThan(1.25);
+    });
+  }, 60000);
+
+  it("stays finite and bounded with the whole pan ringing at once", async () => {
+    // NOTE: `web-audio-engine` implements DynamicsCompressorNode as a
+    // pass-through, so the master limiter does nothing here. What is measured
+    // below is therefore the RAW, UNLIMITED bus, and nothing in this test
+    // should be read as evidence that the limiter works — that is left to a
+    // real browser and to listening. What it does prove is the property the
+    // limiter cannot rescue: that piling nine long decays on top of each other
+    // and re-exciting them for four seconds produces a signal that is finite,
+    // and no louder than those nine fields simply added together. A NaN or a
+    // runaway here would be a limiter fed garbage, which no limiter fixes.
+    //
+    // The finite check below is belt and braces rather than a load-bearing
+    // assertion: `web-audio-engine` coerces a NaN written to an AudioParam to
+    // zero (measured), so a NaN cannot in fact be pushed through the engine's
+    // public API in this harness even when the engine's own guard is removed.
+    // It would still catch a future change that reached the samples by some
+    // other route, and it costs one pass over the buffer.
+    const solo = peak((await render(2, (pan) => pan.strike(0, { velocity: 1, position: 1 }))).samples);
+
+    const ctx = context(6);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    const wholePan = (): void => {
+      for (let index = 0; index < FIELDS.length; index += 1) {
+        pan.strike(index, { velocity: 1, position: 1 });
+      }
+    };
+    wholePan();
+    const beats: number[] = [];
+    for (let t = 0.2; t < 4; t += 0.2) beats.push(Number(t.toFixed(2)));
+    scheduleEach(ctx, beats, wholePan);
+    const samples = (await ctx.startRendering()).getChannelData(0);
+
+    const broken = samples.findIndex((sample) => !Number.isFinite(sample));
+    expect(
+      broken,
+      `every sample of a pan being hammered must be a finite number; sample ${broken} was ${samples[broken]}, and a single NaN silences the output device for the rest of the session`,
+    ).toBe(-1);
+
+    const level = peak(samples);
+    expect(
+      level,
+      `nine fields struck together and re-struck ${beats.length} times must not exceed the nine fields simply added up (${(solo * FIELDS.length).toFixed(3)}); at ${level.toFixed(3)} the engine is stacking voices instead of re-exciting the ones already running`,
+    ).toBeLessThan(solo * FIELDS.length);
+
+    expect(
+      level,
+      "the whole pan struck at once must be audibly bigger than one field on its own, or fields are being dropped when several are played together",
+    ).toBeGreaterThan(solo);
+
+    expect(
+      rms(sliceOf(samples, 4.5, 5.5)),
+      "after the hammering stops the pan must still be ringing rather than having collapsed or blown up",
+    ).toBeGreaterThan(0);
+  }, 60000);
 });

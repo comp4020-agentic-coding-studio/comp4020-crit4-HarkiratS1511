@@ -3,10 +3,11 @@ import { D_KURD, fieldsFor } from "./audio/scales";
 import type { Field, Handpan } from "./audio/types";
 import { bindField, type FieldStrike } from "./ui/field";
 import { createGlow, type Glow } from "./ui/glow";
+import { bindKeyStrikes, bindPointerStrikes, type FieldTarget } from "./ui/pan";
 import { ripple } from "./ui/ripple";
 import { StrikeVelocity } from "./ui/velocity";
 
-// The page's wiring: buttons in, sound and light out.
+// The page's wiring: fields in, sound and light out.
 //
 // The fields are rendered by Astro, not by this file — the pan is on screen and
 // tabbable before any JavaScript runs, and the first tap that reaches here is
@@ -14,14 +15,17 @@ import { StrikeVelocity } from "./ui/velocity";
 // because the gesture the autoplay policy demands and the gesture that plays
 // the instrument are deliberately the same gesture.
 
-/** Every field the page rendered, in DOM order. */
+/** Every field the page rendered, in DOM order — which is scale order, because
+ *  that is the order the markup emits them in and therefore the order Tab
+ *  visits them in. */
 const buttons = [...document.querySelectorAll<HTMLElement>("[data-field]")];
+const targets: FieldTarget[] = buttons.map((el) => ({ el, index: Number(el.dataset.field) }));
 
-/** The pan's full field list, trimmed to what is actually on the page. Sprint 0
- *  renders one field; rendering nine changes the markup and nothing here. */
-const indices = buttons.map((el) => Number(el.dataset.field));
-const fields: Field[] = fieldsFor(D_KURD).filter((field) => indices.includes(field.index));
+/** The pan's field list, trimmed to what is actually on the page. */
+const present = new Set(targets.map((target) => target.index));
+const fields: Field[] = fieldsFor(D_KURD).filter((field) => present.has(field.index));
 
+const shell = document.querySelector<HTMLElement>(".shell") ?? document.body;
 const velocity = new StrikeVelocity();
 
 let context: AudioContext | null = null;
@@ -41,8 +45,12 @@ let glow: Glow | null = null;
  * touch is a few tens of milliseconds later when the finger lifts. Every
  * subsequent strike is immediate. The ripple and the glow are not deferred, so
  * even that first press answers under the finger straight away.
+ *
+ * A chord struck as the very first gesture is held as a list, not a single
+ * strike: losing two of a player's first three notes would be worse than the
+ * bug this exists to fix.
  */
-let held: FieldStrike | null = null;
+const held: FieldStrike[] = [];
 
 /**
  * Build the instrument on the first strike.
@@ -59,11 +67,7 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | nul
   pan = createHandpan(context, fields);
 
   const clock = context;
-  glow = createGlow(
-    buttons.map((el, i) => ({ el, index: indices[i] ?? 0 })),
-    pan,
-    () => clock.currentTime,
-  );
+  glow = createGlow(targets, pan, () => clock.currentTime);
 
   // Belt and braces: if the context starts on its own, anything held plays.
   context.addEventListener("statechange", release);
@@ -82,43 +86,56 @@ function unlock(): void {
   });
 }
 
-/** Play a strike that was made before the audio was allowed to start. */
+/** Play the strikes that were made before the audio was allowed to start. */
 function release(): void {
   if (!context || !pan || !glow || context.state !== "running") return;
-  const waiting = held;
-  held = null;
-  if (!waiting) return;
-  pan.strike(waiting.index, waiting.strike);
+  if (held.length === 0) return;
+  const waiting = held.splice(0, held.length);
+  for (const strike of waiting) pan.strike(strike.index, strike.strike);
   glow.wake();
 }
 
-function play(event: FieldStrike, el: HTMLElement): void {
+function play(event: FieldStrike): void {
   const live = instrument();
   if (!live) return;
 
   if (live.context.state === "running") {
     live.pan.strike(event.index, event.strike);
   } else {
-    held = event;
+    held.push(event);
     unlock();
   }
   live.glow.wake();
 
   // What the strike was, for the CSS that colours it.
-  el.style.setProperty("--vel", event.strike.velocity.toFixed(3));
-  el.style.setProperty("--pos", event.strike.position.toFixed(3));
-  ripple(el, event.point.x, event.point.y, event.strike.velocity);
+  event.el.style.setProperty("--vel", event.strike.velocity.toFixed(3));
+  event.el.style.setProperty("--pos", event.strike.position.toFixed(3));
+  ripple(event.el, event.point.x, event.point.y, event.strike.velocity);
 
   // The pan breathes until it is first struck. Once it has been, the invitation
   // has been accepted and the movement would only be noise.
   document.body.dataset.played = "true";
 }
 
-for (const [i, el] of buttons.entries()) {
-  bindField(el, indices[i] ?? 0, velocity, (event) => {
-    play(event, el);
-  });
+// Pointer for hands, the key map for a keyboard played as an instrument, and
+// native activation per button for Tab-and-Enter and for assistive technology.
+bindPointerStrikes(shell, targets, velocity, play);
+bindKeyStrikes(targets, velocity, play);
+for (const { el, index } of targets) {
+  bindField(el, index, velocity, play);
 }
+
+// The key each field answers to is not printed on the cold-open page — a
+// stranger is meant to reach out and touch the thing, not read it. It appears
+// the moment somebody uses a keyboard at all, which is exactly when it stops
+// being clutter and starts being the map.
+window.addEventListener(
+  "keydown",
+  () => {
+    document.body.dataset.keys = "true";
+  },
+  { passive: true },
+);
 
 // The earliest moments the platform will let a suspended context start. A tab
 // returning from the background can also have had its context suspended out

@@ -1,25 +1,42 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { D_KURD, fieldsFor } from "../scripts/audio/scales";
+import { FIELD_KEYS, litness, placement } from "../scripts/ui/layout";
 
-// Sprint 0 is one field, made excellent, before it is multiplied by nine. The
-// field list comes from the same module the audio engine is built from, so the
-// note stamped on the shell and the note that sounds cannot drift apart.
-const fields = fieldsFor(D_KURD).slice(0, 1);
+// The whole pan: the ding and its eight tone fields, in D Kurd. The field list
+// comes from the same module the audio engine is built from, so the note
+// stamped on the steel and the note that sounds cannot drift apart.
+//
+// DOM order is scale order — ding, then the eight ascending — which is also the
+// order Tab visits them in. The zigzag is in the geometry, not the markup, so a
+// keyboard player climbs the scale in pitch order while a pair of hands climbs
+// it alternating left and right. Both are the instrument's real order.
+const fields = fieldsFor(D_KURD);
 
-// Where each field sits on the shell, as percentages of it. The ding is the
-// centre of a handpan and of this; sprint 1 replaces this with the alternating
-// spiral the eight tone fields are laid out in, and nothing else has to change
-// — the buttons carry their own geometry as custom properties.
+/** Each button carries its own place on the shell, so the layout is data and
+ *  the stylesheet only has to know how to draw a crater. */
 function place(index: number): string {
-  if (index === 0) return "--fx: 50%; --fy: 50%; --size: 38%;";
-  return "--fx: 50%; --fy: 50%; --size: 24%;";
+  const { x, y, size } = placement(index);
+  return [
+    `--fx:${x.toFixed(3)}%`,
+    `--fy:${y.toFixed(3)}%`,
+    // Unitless, so every length inside the field — the depth of its shading,
+    // the size of its stamp — can be a share of the field's own diameter and
+    // stay in proportion from a 1920px desktop down to a 390px phone.
+    `--sizen:${(size / 100).toFixed(5)}`,
+    // How much light this part of the dome is turned toward, so a crater on
+    // the far shoulder of the shell is dimmer than one facing the lamp.
+    `--lit:${litness(index).toFixed(4)}`,
+    // Position in the scale, used to stagger the waiting animation so the pan
+    // breathes as one object rather than as nine.
+    `--seq:${index}`,
+  ].join(";");
 }
 ---
 
 <Layout
   title="Handpan"
-  description="A handpan synthesised live in the browser: struck steel in D Kurd, with the weight of the strike taken from how fast your hand was moving and its colour from where on the field you landed."
+  description="A handpan synthesised live in the browser: nine tone fields in D Kurd laid out the way real steel is, struck with the weight of your hand and coloured by where on the field you land."
 >
   <header class="masthead">
     <h1>Handpan <span class="scale">D Kurd</span></h1>
@@ -29,9 +46,18 @@ function place(index: number): string {
     <div class="shell">
       {
         fields.map((field) => (
-          <button class="field" type="button" data-field={field.index} style={place(field.index)}>
+          <button
+            class="field"
+            type="button"
+            data-field={field.index}
+            aria-keyshortcuts={FIELD_KEYS[field.index]}
+            style={place(field.index)}
+          >
             <span class="face" aria-hidden="true" />
             <span class="stamp">{field.name}</span>
+            <span class="cue" aria-hidden="true">
+              {FIELD_KEYS[field.index]}
+            </span>
           </button>
         ))
       }
