@@ -1,85 +1,84 @@
 # Process overview
 
-<!-- TEMPLATE: this file is a shape to fill in, not a form. Replace everything
-     in it with your own overview, and delete this comment — `pnpm
-     check:evidence` will remind you if it's still here. -->
-
-A reading-guide to how the work came together --- a map to your process, not an
-essay about it. Markers read this file and follow its citations; they don't
-trawl the repo for evidence you didn't point at, so if a moment mattered, cite
-it.
-
-This file is the shape; the course site's
-[assessment page](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#what-you-submit)
-is the requirement, and its
-[word counts](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#word-counts)
-cover every deliverable.
+A reading-guide to how this prototype came together: the moments that mattered,
+each pointing at the commit that holds it.
 
 ## What I built
 
-One paragraph: the thing, and the idea behind it.
+A handpan --- a steel percussion instrument with a central ding and eight tone
+fields tuned to a single scale --- synthesised live in the browser with Web
+Audio. Sprint 0 built one field to modal-synthesis quality (fundamental, tuned
+octave and compound fifth aligned for the "singing" quality, plus inharmonic
+shimmer partials) as a real, server-rendered `<button>`, verified against an
+`OfflineAudioContext` test suite and driven in a real browser at both marked
+viewports. The idea and the sprint plan for the rest of the instrument are in
+[`PLAN.md`](PLAN.md); this is a prototype in progress, not the finished piece.
 
 ## The moments that mattered
 
-Three or four for an assignment; fewer is fine for a weekly prototype. Keep the
-list short so each moment has room to do all four jobs:
+1. **The contract came before the code.** Before any sprint work started,
+   `src/scripts/audio/types.ts` and `scales.ts` fixed the interface between the
+   audio engine, the input layer and the renderer --- DOM-free and built against
+   `BaseAudioContext` so the same engine can later render through an
+   `OfflineAudioContext` under test. That let sprint 0's engine, test suite and
+   page be written against one fixed shape instead of each inventing its own
+   ([`076add1`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/076add11e10b62ba3d59f9109ac0ee951031d059)).
+   The published spec's checkable lines were turned into tests the same session,
+   before any prototype existed, so `spec/crit-4.test.ts` started red
+   ([`2a173ba`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/2a173ba321cb83d610fe073e117f9a4980707428)).
 
-1. **what happened** --- the problem, or the thing that went wrong
-2. **what you did instead of the obvious thing** --- the call you made, and why
-   it beat the obvious one
-3. **how you knew it was right** --- the check you ran, the viewport you looked
-   at, what you read before accepting the diff
-4. **the citation** --- a commit or commit range, a `CLAUDE.md` change, a check
-   that went from red to green, a prompt paired with the commit it produced
+2. **A real bug in the persistent-oscillator architecture, caught by measurement
+   before it reached a listener.** `PLAN.md` commits to oscillators that start
+   once and never stop, so a detuned pair for chorus on the low modes locks its
+   phase to context time zero rather than to the strike --- it passes through a
+   full null every `1/split` seconds, and a strike landing near one lost its
+   fundamental (measured 0.155 to 0.010 at t=0.75s). The fix was to move the
+   detuning off the fundamental modes entirely and keep it only on the shimmer
+   partials, where a null reads as movement rather than as a dead note
+   ([`d4ba5ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/d4ba5ad58b9694d8054903e65d01cc311cb1d290)).
 
-Jobs 2 and 3 are the ones the repo can't tell a reader on its own, so they're
-where the marks are. The strongest moments are the ones where a correction
-landed in the **harness** --- the standards and checks your work has to satisfy
---- rather than in a retry: a rule added to `CLAUDE.md`, a check wired up, an
-attempt thrown away. Retrying until it passes is the routine case, and changing
-what the work runs against is the skilled one.
+3. **Choosing the offline audio library on evidence, not convenience.**
+   `node-web-audio-api` was the obvious pick for rendering audio headlessly
+   under vitest, but its native binary requires `libasound.so.2` even for
+   offline rendering, which CI doesn't have. `web-audio-engine` was
+   cross-validated against it first (max sample delta 1.3e-3) before being
+   adopted as the test-suite renderer, so the sound itself is under test rather
+   than only the markup
+   ([`d4ba5ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/d4ba5ad58b9694d8054903e65d01cc311cb1d290)).
+   The suite's assertions were mutation-checked rather than trusted on sight ---
+   a naive sine beep misses the partial-ratio bar by ~800x, and a "position"
+   control that only changes gain fails all three mix tests --- and that check
+   also found one assertion that wasn't load-bearing: a finite-samples check
+   meant to catch a NaN turns out to be belt-and-braces only, because
+   `web-audio-engine` coerces a NaN written to an `AudioParam` to zero before it
+   can reach the output, so it's commented as such rather than left to imply a
+   guarantee the test doesn't actually provide
+   (`spec/audio.test.ts:889-905`).
 
-Cite each moment as a link whose text is the commit hash or range and whose
-target is this repo's commit or compare URL, so a reader clicks straight to the
-evidence:
+4. **Two bugs only a real browser could show up, caught by driving the built
+   site instead of trusting the offline suite.** The glow slept through the
+   first note because `AudioContext.currentTime` is pinned at 0 until the audio
+   thread renders a block, which the JSDOM/offline suite can't reproduce; and
+   touch couldn't start audio at all, because Chrome grants user activation on
+   `touchend` rather than `touchstart`, so the first tap was silently lost. Both
+   were only visible driving `pnpm preview` under the real Pages base path in
+   Chromium, which is the check `CLAUDE.md`'s Assignment 1 lessons already
+   required carrying forward
+   ([`d4ba5ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/d4ba5ad58b9694d8054903e65d01cc311cb1d290)).
 
-- one commit: [`a1b2c3d`](https://github.com/YOUR-ORG/YOUR-REPO/commit/a1b2c3d)
-- a range:
-  [`a1b2c3d...e4f5a6b`](https://github.com/YOUR-ORG/YOUR-REPO/compare/a1b2c3d...e4f5a6b)
-
-To pair a prompt with the commit it produced, quote the prompt (curated, not a
-full transcript) next to the citation:
-
-> the prompt, verbatim
-
-Screenshots are welcome where one carries the verification better than a
-sentence does. Commit the file to this repo and link it with a **relative**
-path, which is what makes it render on GitHub: `![alt text](docs/before.png)`.
-Images don't count towards the word count and don't replace the citation.
-
-### A worked moment, for shape
-
-Delete this section along with the rest of the boilerplate --- it's here to show
-the four jobs in one paragraph, not to be imitated in content.
-
-> The date formatter kept coming back with `toLocaleDateString()` and no locale
-> argument, so the same build rendered differently on my machine and in CI. I'd
-> already re-prompted it twice, which fixed the line but not the habit, so the
-> third time I put the rule in `CLAUDE.md` instead
-> ([`3f9ac21`](https://github.com/YOUR-ORG/YOUR-REPO/commit/3f9ac21)) and added
-> a spec test that fails on a bare `toLocaleDateString`. That's what told me it
-> had actually taken: the test went red against the old code and green against
-> the new, and the next two features it wrote passed it without prompting
-> ([`3f9ac21...b7e0d14`](https://github.com/YOUR-ORG/YOUR-REPO/compare/3f9ac21...b7e0d14)).
+5. **The harness itself was edited, not just the code.** Rather than starting
+   `CLAUDE.md` from the template, the earned section from the Assignment 1 repo
+   ("What earlier builds taught the harness") was carried forward, dropping the
+   two bullets specific to that assignment's chord app and keeping the general
+   lessons --- the static-suite-can't-see-interaction rule, the
+   subagent-report-isn't-verification rule, the Astro base-path rule, and
+   commit-one-verified-phase-at-a-time --- which is why the browser-only bugs in
+   moment 4 were caught at all
+   ([`452d5e3`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit4-HarkiratS1511/commit/452d5e34507d4c1da56b1bf185403bfd9d922e77)).
 
 ## Before you ship
 
-`pnpm check:evidence` verifies your citations resolve to real commits, that a
-reflection entry the marker reads is in `reflections/`, and that your
-`CLAUDE.md` is there --- before a marker ever opens the file. It checks that
-your map is traceable, not that it is good: the marker judges whether your
-small, deliberately chosen set of moments shows real judgement and reflection. A
-green check is not a substitute for that curation.
-
-Images aren't checked: whether one renders is visible the moment you look. Open
-this file on GitHub and look at it before you ship.
+This is sprint 0 of the plan in `PLAN.md`: one field built to full quality, not
+the whole instrument. Later sprints (the nine-field layout, expressiveness,
+sympathetic resonance, the memory that answers back, the gliding scale) are
+still to come and will add to this file as they land.
