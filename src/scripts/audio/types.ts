@@ -17,6 +17,22 @@ export interface Strike {
   position: number;
 }
 
+/**
+ * A strike as it actually landed, for anything downstream that wants to react
+ * to playing rather than drive it — a phrase memory, a sympathetic neighbour.
+ * `when` is the same `BaseAudioContext.currentTime` the voice itself was
+ * struck at, so an observer can schedule its own audio in exact relation to
+ * this one rather than guessing at the delay since it was notified.
+ */
+export interface StrikeEvent {
+  index: number;
+  strike: Strike;
+  when: number;
+}
+
+/** Notified after a strike lands. See `Handpan.onStrike`. */
+export type StrikeObserver = (event: StrikeEvent) => void;
+
 /** One tone field: a tuned area of the shell. */
 export interface Field {
   /** Index into the pan's fields. 0 is always the central ding. */
@@ -66,4 +82,30 @@ export interface Handpan {
    * sound are the same state rendered twice.
    */
   amplitudeAt(index: number, when: number): number;
+
+  /**
+   * Glide a field's fundamental to `frequency`, arriving at `when + glide`
+   * (immediately if `glide` is omitted). The mode ratios and the decay
+   * already running are left exactly as they were struck with — a note that
+   * is already ringing keeps the envelope it was struck with while its pitch
+   * moves under it.
+   *
+   * `field.ts` has always had this; it is promoted onto the public contract
+   * here because a scale morph (sprint 5) has to reach every voice from
+   * outside the engine without the engine growing scale-specific knowledge.
+   */
+  retune(index: number, frequency: number, when: number, glide?: number): void;
+
+  /**
+   * Subscribe to every strike as it lands — including one a sympathetic
+   * neighbour or a phrase memory makes by calling `strike()` from inside
+   * someone else's observer. Returns its own unsubscribe.
+   *
+   * Safe to call `strike()` from inside an observer: the engine bounds how
+   * deep one strike's chain of re-triggered strikes is allowed to notify
+   * observers before it stops propagating, so a cycle of fields re-exciting
+   * each other cannot recurse forever. The strike that hits the bound still
+   * sounds; it simply does not fan back out to observers again.
+   */
+  onStrike(observer: StrikeObserver): () => void;
 }

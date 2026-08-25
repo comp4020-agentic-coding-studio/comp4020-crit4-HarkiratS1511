@@ -1,4 +1,5 @@
 import type { Strike } from "../audio/types";
+import type { HoldDamper } from "./damp";
 import type { StrikeVelocity } from "./velocity";
 
 // What one field owes the platform.
@@ -50,8 +51,10 @@ export function bindField(
   index: number,
   velocity: StrikeVelocity,
   onStrike: StrikeHandler,
+  damper: HoldDamper,
 ): () => void {
   let lastKeyStrike = Number.NEGATIVE_INFINITY;
+  const session = `btn:${index}`;
 
   const activation = (): FieldStrike => ({
     index,
@@ -69,6 +72,22 @@ export function bindField(
     key.preventDefault();
     lastKeyStrike = performance.now();
     onStrike(activation());
+    // Same hold-to-damp gesture as everywhere else: holding Enter or Space on
+    // a focused field past the threshold damps it, tapping does not.
+    damper.press(session, index);
+  };
+
+  const onKeyUp = (event: Event): void => {
+    const key = event as KeyboardEvent;
+    if (!ACTIVATION_KEYS.has(key.key)) return;
+    damper.release(session);
+  };
+
+  // A field can lose focus while its activation key is still physically
+  // down (Tab, Alt+Tab, a screen reader moving focus); without this the hold
+  // would keep counting down against a button that no longer has the key.
+  const onBlur = (): void => {
+    damper.release(session);
   };
 
   // Assistive technology activates a control by dispatching a click with no
@@ -83,10 +102,14 @@ export function bindField(
   };
 
   el.addEventListener("keydown", onKeyDown);
+  el.addEventListener("keyup", onKeyUp);
+  el.addEventListener("blur", onBlur);
   el.addEventListener("click", onClick);
 
   return () => {
     el.removeEventListener("keydown", onKeyDown);
+    el.removeEventListener("keyup", onKeyUp);
+    el.removeEventListener("blur", onBlur);
     el.removeEventListener("click", onClick);
   };
 }

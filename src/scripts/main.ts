@@ -1,6 +1,7 @@
 import { createHandpan } from "./audio/engine";
 import { D_KURD, fieldsFor } from "./audio/scales";
 import type { Field, Handpan } from "./audio/types";
+import { createHoldDamper } from "./ui/damp";
 import { bindField, type FieldStrike } from "./ui/field";
 import { createGlow, type Glow } from "./ui/glow";
 import { bindKeyStrikes, bindPointerStrikes, type FieldTarget } from "./ui/pan";
@@ -117,12 +118,23 @@ function play(event: FieldStrike): void {
   document.body.dataset.played = "true";
 }
 
+/**
+ * A palm on the steel. One damper serves every input method, because the
+ * gesture it recognises — a press that stays down past a beat — means the
+ * same thing regardless of what made it. The instrument always exists by the
+ * time this can fire: every caller below only starts a hold countdown after
+ * the strike that began it has already gone through `play()`.
+ */
+const damper = createHoldDamper((index) => {
+  instrument()?.pan.damp(index);
+});
+
 // Pointer for hands, the key map for a keyboard played as an instrument, and
 // native activation per button for Tab-and-Enter and for assistive technology.
-bindPointerStrikes(shell, targets, velocity, play);
-bindKeyStrikes(targets, velocity, play);
+bindPointerStrikes(shell, targets, velocity, play, damper);
+bindKeyStrikes(targets, velocity, play, damper);
 for (const { el, index } of targets) {
-  bindField(el, index, velocity, play);
+  bindField(el, index, velocity, play, damper);
 }
 
 // The key each field answers to is not printed on the cold-open page — a

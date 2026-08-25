@@ -10,8 +10,44 @@
 // ever press, so the approach is free for them. Touch reports nothing before
 // contact — a finger's first event is the landing — so touch falls back to the
 // contact patch, calibrated against the range this particular device has been
-// seen to report, and to a musical default until enough taps exist to calibrate
-// against. That fallback is honest but weak; it is called out in the report.
+// seen to report, and to a musical default until enough taps exist to
+// calibrate against.
+//
+// Two other signals were considered and rejected rather than shipped as a
+// placebo:
+//
+//   * **Movement in the first few ms after contact.** Real, and in principle
+//     causally sound — a slapped-down finger carries residual lateral motion
+//     into the landing that a placed one does not. It was rejected because
+//     reading it means holding the strike back until at least one more
+//     pointermove sample has arrived, which on a typical touch digitizer is
+//     8-16ms away — longer than the whole 5ms attack ramp the strike is
+//     supposed to trigger. Every touch-music instrument this project could
+//     find avoids exactly this trade for exactly this reason: added latency
+//     on every strike is worse than a strike whose loudness is a guess.
+//   * **Time to release.** Only known after the note has already sounded, so
+//     it cannot inform the strike that already happened — only a later one,
+//     which is a tempo signal wearing a velocity costume, not a force signal.
+//     It is also already spoken for: a press that stays down is exactly the
+//     hold-to-damp gesture (`ui/damp.ts`), so reusing "how long the finger
+//     stayed down" to mean two different things at once would make the two
+//     gestures fight each other.
+//
+// That leaves contact patch as the only signal available at the moment the
+// strike has to fire. It is a real signal on real capacitive touchscreens —
+// touch "size" grows with contact area, which does grow somewhat with press
+// force — but it is a weak one: capacitive digitizers primarily measure
+// contact geometry, and how strongly that tracks force varies by device and
+// by finger angle, which is exactly why this stays self-calibrating per
+// session rather than assuming any fixed physical scale. It is honestly
+// flagged as such in the sprint report: headless CDP touch emulation can
+// prove this wiring reacts to whatever contact size is dispatched, but
+// cannot prove real glass reports a meaningfully varying size under real
+// force, and that half of the claim has to be taken on a phone.
+//
+// The calibration itself uses percentiles rather than raw min/max of the
+// session's contact areas, so one unusually hard or glancing tap early in a
+// session does not permanently pin the whole scale.
 
 /** One position sample on the way to a strike. */
 interface Sample {
@@ -35,15 +71,35 @@ const MIN_VELOCITY = 0.12;
  *  keyboard, where there is no analogue of hand speed at all. */
 const DEFAULT_VELOCITY = 0.55;
 
-/** Touch needs a few taps before min/max contact area means anything. */
+/** Touch needs a few taps before a calibration range means anything. */
 const MIN_CALIBRATION_SAMPLES = 4;
 
-/** Below this spread the device is reporting a constant contact size and the
- *  patch carries no information. */
+/** Below this spread the device is reporting an essentially constant contact
+ *  size and the patch carries no information. */
 const INFORMATIVE_SPREAD = 0.18;
+
+/**
+ * The calibration range is read off these percentiles of the session's
+ * contact areas rather than the raw min and max. One unusually hard or
+ * glancing tap early in a session would otherwise permanently set one end of
+ * the scale, so every later ordinary tap reads as pinned to the opposite end.
+ */
+const CALIBRATION_LOW_PERCENTILE = 0.1;
+const CALIBRATION_HIGH_PERCENTILE = 0.9;
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+/** Linearly-interpolated percentile of an already-sorted array. */
+function percentile(sorted: readonly number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const at = clamp01(p) * (sorted.length - 1);
+  const low = Math.floor(at);
+  const high = Math.ceil(at);
+  const lowValue = sorted[low] ?? 0;
+  const highValue = sorted[high] ?? lowValue;
+  return lowValue + (highValue - lowValue) * (at - low);
 }
 
 /** Map a speed in px/s onto 0..1, with a curve that spends more of its range on
@@ -101,7 +157,28 @@ export class StrikeVelocity {
     return this.#fromSpeed(event);
   }
 
-  /** Keyboard has no hand speed to measure, so it plays at a musical default. */
+  /**
+   * Keyboard has no hand speed to measure, so it plays at a musical default.
+   *
+   * Considered and rejected rather than left unexamined: `KeyboardEvent`
+   * carries no analogue of force or speed at all (no pressure, no contact
+   * geometry). The two candidates that look like dynamics are already spoken
+   * for or not actually about force —
+   *
+   *   * key-repeat rate only exists once a key is already held, and holding a
+   *     key is the hold-to-damp gesture (`ui/damp.ts`); reading repeat rate as
+   *     loudness would make holding a key simultaneously mean "mute this" and
+   *     "here is how hard I'm playing", which is not an honest dynamic, it is
+   *     two behaviours in a trenchcoat.
+   *   * time between strikes is a tempo signal, not a force signal — mapping
+   *     "played fast" to "played loud" would be inventing a correlation a
+   *     keyboard player never actually asserted, which is exactly the
+   *     "arbitrary mapping presented as expressiveness" this project is
+   *     trying not to ship.
+   *
+   * So this stays a flat constant, honestly, rather than dressed up as a
+   * dynamic it isn't.
+   */
   keyboardVelocity(): number {
     return DEFAULT_VELOCITY;
   }
@@ -141,10 +218,15 @@ export class StrikeVelocity {
     if (this.#areas.length > MAX_SAMPLES) this.#areas.shift();
     if (this.#areas.length < MIN_CALIBRATION_SAMPLES) return DEFAULT_VELOCITY;
 
-    const min = Math.min(...this.#areas);
-    const max = Math.max(...this.#areas);
-    if (max <= 0 || (max - min) / max < INFORMATIVE_SPREAD) return DEFAULT_VELOCITY;
+    const sorted = [...this.#areas].sort((a, b) => a - b);
+    const low = percentile(sorted, CALIBRATION_LOW_PERCENTILE);
+    const high = percentile(sorted, CALIBRATION_HIGH_PERCENTILE);
+    if (high <= 0 || (high - low) / high < INFORMATIVE_SPREAD) return DEFAULT_VELOCITY;
 
-    return MIN_VELOCITY + (1 - MIN_VELOCITY) * clamp01((area - min) / (max - min));
+    // clamp01 rather than a hard floor/ceiling: a tap outside the [low, high]
+    // band this session has settled into (the hardest or softest one yet)
+    // should still read as louder or softer than anything before it, just
+    // capped at the ends of the dynamic range rather than reset by it.
+    return MIN_VELOCITY + (1 - MIN_VELOCITY) * clamp01((area - low) / (high - low));
   }
 }

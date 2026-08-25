@@ -1,3 +1,4 @@
+import type { HoldDamper } from "./damp";
 import type { StrikeHandler } from "./field";
 import { fieldForKey } from "./layout";
 import type { StrikeVelocity } from "./velocity";
@@ -102,6 +103,7 @@ export function bindPointerStrikes(
   targets: readonly FieldTarget[],
   velocity: StrikeVelocity,
   onStrike: StrikeHandler,
+  damper: HoldDamper,
 ): () => void {
   /** Which field each live pointer is currently on. -1 means "on bare steel",
    *  which matters: leaving a field and coming back is a second strike. */
@@ -119,6 +121,12 @@ export function bindPointerStrikes(
       point,
       el: disc.el,
     });
+    // Every pointerId — mouse, pen, or one of several fingers — gets its own
+    // hold countdown, keyed to whichever field it is on right now. A rake
+    // crossing several fields keeps cancelling and restarting this as it
+    // goes, so only a press that actually comes to rest on one field ever
+    // reaches the damp threshold.
+    damper.press(event.pointerId, disc.index);
   };
 
   const onPointerDown = (raw: Event): void => {
@@ -153,11 +161,18 @@ export function bindPointerStrikes(
     if (current === previous) return;
 
     active.set(event.pointerId, current);
-    if (disc) strike(disc, event);
+    if (disc) {
+      strike(disc, event);
+    } else {
+      // Wandered off onto bare steel: nothing to damp until it lands again.
+      damper.release(event.pointerId);
+    }
   };
 
   const onPointerEnd = (raw: Event): void => {
-    active.delete((raw as PointerEvent).pointerId);
+    const event = raw as PointerEvent;
+    damper.release(event.pointerId);
+    active.delete(event.pointerId);
   };
 
   root.addEventListener("pointerdown", onPointerDown);
@@ -191,12 +206,20 @@ export function bindKeyStrikes(
   targets: readonly FieldTarget[],
   velocity: StrikeVelocity,
   onStrike: StrikeHandler,
+  damper: HoldDamper,
 ): () => void {
   const byIndex = new Map(targets.map((target) => [target.index, target.el]));
 
+  // Keyed by the physical key (`code`, not `key`) so a modifier changing
+  // mid-hold cannot leave a session stuck open: holding "v" and then pressing
+  // Shift can change what `key` reports on some platforms, but `code` never
+  // does for the same physical key.
+  const session = (event: KeyboardEvent): string => `key:${event.code}`;
+
   const onKeyDown = (raw: Event): void => {
     const event = raw as KeyboardEvent;
-    // Auto-repeat is the key still being held, not a second strike.
+    // Auto-repeat is the key still being held, not a second strike — the
+    // damper is already counting down from the original keydown below.
     if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
 
     const index = fieldForKey(event.key);
@@ -214,10 +237,20 @@ export function bindKeyStrikes(
       point: { x: 0.5, y: 0.5 },
       el,
     });
+    // Holding the key down past the damp threshold reads exactly like holding
+    // a finger down: the note already sounded on this keydown, and lifting
+    // any time before the threshold is just an ordinary tap.
+    damper.press(session(event), index);
+  };
+
+  const onKeyUp = (raw: Event): void => {
+    damper.release(session(raw as KeyboardEvent));
   };
 
   window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
   return () => {
     window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup", onKeyUp);
   };
 }
