@@ -63,6 +63,7 @@ body {
 .masthead,
 .colophon {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.9rem;
   align-items: baseline;
   padding: clamp(1rem, 3vmin, 1.75rem) clamp(1rem, 4vmin, 2.5rem);
@@ -782,5 +783,48 @@ body:not([data-played]) .face::after {
 
   .field[data-source="memory"] .face::before {
     animation: none;
+  }
+}
+
+/*
+ * The one sentence the instrument says about itself, and it waits until the
+ * shell has actually answered someone before saying it. A player who has
+ * stopped playing and heard notes anyway has a question at exactly that
+ * moment; before then there is no question, and a line explaining an echo
+ * nobody has heard yet is just instruction on a cold open.
+ *
+ * It shows, holds, and then withdraws, because it is an answer rather than a
+ * caption — once read it should stop taking up the shell's room.
+ */
+.answering {
+  flex-basis: 100%;
+  max-width: 42ch;
+  margin: 0.15rem 0 0;
+  color: rgb(139 151 165 / 62%);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  line-height: 1.55;
+  text-transform: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+body[data-answered] .answering {
+  animation: answering 16s ease forwards;
+}
+
+@keyframes answering {
+  0% { opacity: 0; }
+  5% { opacity: 1; }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Reduced motion still gets the sentence — it is information, not decoration.
+   It simply stays put rather than fading in and withdrawing. */
+@media (prefers-reduced-motion: reduce) {
+  body[data-answered] .answering {
+    animation: none;
+    opacity: 1;
   }
 }

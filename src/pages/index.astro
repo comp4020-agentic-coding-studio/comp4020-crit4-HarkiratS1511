@@ -78,6 +78,15 @@ function place(index: number): string {
 >
   <header class="masthead">
     <h1>Handpan <span class="scale">D Kurd</span></h1>
+    {/* Says what just happened, at the moment it first happens — not before.
+        A player who has stopped playing and heard notes anyway has a question,
+        and this is the only place in the instrument that answers one. It is
+        gated on the shell having actually answered, so the cold open never
+        shows it. */}
+    <p class="answering" data-answering>
+      The shell is answering you. It keeps the last phrase you played and
+      returns it quieter each time, until it forgets.
+    </p>
   </header>
 
   <main class="stage">

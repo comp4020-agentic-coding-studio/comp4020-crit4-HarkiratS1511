@@ -127,6 +127,13 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow; morph:
   pan.onStrike(({ index }) => {
     const target = targets.find((candidate) => candidate.index === index);
     if (target) target.el.dataset.source = playerStrike ? "player" : "memory";
+
+    // The first time the shell answers on its own, say so once. A player who
+    // has stopped and still hears notes has a question right at that moment,
+    // and nowhere else on the instrument answers it. Set on the first
+    // non-player strike only, so the cold open stays wordless and the line
+    // never appears for someone who has not yet heard the thing it explains.
+    if (!playerStrike) document.body.dataset.answered = "true";
   });
 
   const clock = context;
