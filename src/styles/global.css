@@ -215,6 +215,116 @@ h1 {
   pointer-events: none;
 }
 
+/* ------------------------------------------------------------------ tune  */
+
+/*
+ * Sprint 5: the scale glides. The control for it is machined into the rim
+ * itself — a shallow groove with a bead of light riding in it, the same
+ * visual vocabulary the shell already uses for the fields' own dents and
+ * lathe marks, not a UI widget dropped on top of them. Nothing here is
+ * labelled or boxed; it is discoverable the way a real tuning detail would
+ * be, by a hand finding it while exploring the rim, and it never grows past
+ * that: it never accepts a chord's worth of fingers, never sounds a note by
+ * itself, and its arc sits well outside the largest field's own reach (see
+ * the geometry comment above `TUNE_RADIUS` in index.astro).
+ */
+
+.tune {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tune svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.tune-groove,
+.tune-sheen,
+.tune-fill,
+.tune-hit {
+  fill: none;
+  stroke-linecap: round;
+}
+
+/* The channel cut into the rim: dark, so it reads as pressed in rather than
+   laid on top — the same inset logic as a tone field's own hollow. */
+.tune-groove {
+  stroke: rgb(0 0 0 / 55%);
+  stroke-width: 1.6;
+}
+
+/* A hairline catching the one lamp everything else on the shell answers to. */
+.tune-sheen {
+  stroke: rgb(255 255 255 / 14%);
+  stroke-width: 0.5;
+  transform: translate(0.25px, -0.35px);
+}
+
+/* The bead of light that has travelled as far into the groove as the morph
+   has — the pan's own progress mark, drawn from steel and ember rather than
+   borrowed from a slider's thumb. Driven by --morph, set from main.ts on
+   every drag update the same way a strike sets --amp. */
+.tune-fill {
+  stroke: rgb(var(--ember) / calc(0.55 + var(--morph, 0) * 0.45));
+  stroke-width: 1.9;
+  stroke-dasharray: 100;
+  stroke-dashoffset: calc(100 - var(--morph, 0) * 100);
+  filter: drop-shadow(
+    0 0 calc(1px + var(--morph, 0) * 2.5px) rgb(var(--ember) / calc(var(--morph, 0) * 0.85))
+  );
+  transition: stroke-dashoffset 60ms linear;
+}
+
+/* The generous, invisible hit area a thumb actually finds — much fatter than
+   the bead it draws, the same "forgiving target, honest visual" split the
+   fields already use between --dish and the crater drawn inside it. */
+.tune-hit {
+  stroke: transparent;
+  stroke-width: 9;
+  pointer-events: stroke;
+  cursor: grab;
+  touch-action: none;
+}
+
+.tune-hit:active {
+  cursor: grabbing;
+}
+
+/*
+ * The real control underneath: a native range input, stretched over the same
+ * area and made invisible. It is a legitimate <input type="range">, so Tab
+ * reaches it, arrow keys (and Home/End, and Page Up/Down) move it, and a
+ * screen reader announces it by its accessible name — it simply never looks
+ * like the form control it is. Pointer handling is done by hand in main.ts,
+ * against the fatter .tune-hit path above, because a circular drag is not a
+ * gesture a horizontal range input understands on its own; this input exists
+ * for keyboard and assistive technology, not for the mouse.
+ */
+.tune-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  appearance: none;
+  background: none;
+}
+
+.tune-input:focus-visible ~ .tune .tune-hit {
+  stroke: rgb(var(--ember) / 22%);
+}
+
+.tune-input:focus-visible ~ .tune .tune-fill {
+  filter: drop-shadow(0 0 3px rgb(var(--ember) / 90%));
+}
+
 /* ----------------------------------------------------------------- field  */
 
 .field {

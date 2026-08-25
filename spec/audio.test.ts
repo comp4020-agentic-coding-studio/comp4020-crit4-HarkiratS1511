@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { createHandpan } from "../src/scripts/audio/engine";
 import { attachMemory } from "../src/scripts/audio/memory";
+import { attachMorph } from "../src/scripts/audio/morph";
 import { attachResonance } from "../src/scripts/audio/resonance";
 import { AMARA, CELTIC_MINOR, D_KURD, fieldsFor, morph, noteName, transpose } from "../src/scripts/audio/scales";
 import { MODE_RATIOS } from "../src/scripts/audio/types";
@@ -1338,4 +1339,210 @@ describe("phrase memory", () => {
     },
     30000,
   );
+});
+
+describe("scale morph (sprint 5)", () => {
+  // The plan's central claim for this sprint: the scale glides while notes are
+  // still ringing, rather than swapping the moment a control is touched. The
+  // maths of that glide (log-space interpolation, exact at the ends, monotonic
+  // between them) is already covered above under "the scale maths" — this
+  // block is about `morph.ts`, the thin module that turns a 0..1 position into
+  // real `retune()` calls on a running `Handpan`.
+  //
+  // `attachMorph` only ever touches `Handpan.retune()`, so most of what
+  // follows is exercised against a bare object satisfying the `Handpan`
+  // contract rather than the full engine — a unit test of the wiring, not of
+  // the sound. The one test that renders real audio (below) is the one that
+  // matters most to the brief: it is the only place in this suite that proves
+  // a note struck before a morph is still the note ringing after it, just at
+  // a different pitch, rather than being cut off and replaced.
+
+  /** A `Handpan` whose `retune` calls are recorded rather than acted on, so a
+   *  test can inspect exactly what `attachMorph` asked for without rendering
+   *  any audio. Every other member is a harmless no-op — `attachMorph` never
+   *  calls them. */
+  function recordingPan(): {
+    pan: Handpan;
+    log: { index: number; frequency: number; when: number; glide?: number }[];
+  } {
+    const log: { index: number; frequency: number; when: number; glide?: number }[] = [];
+    const pan: Handpan = {
+      fields: fieldsFor(D_KURD),
+      strike: () => {},
+      damp: () => {},
+      amplitudeAt: () => 0,
+      retune: (index, frequency, when, glide) => {
+        log.push({ index, frequency, when, glide });
+      },
+      onStrike: () => () => {},
+    };
+    return { pan, log };
+  }
+
+  it("at position 0 retunes every field to exactly the scale it started from", () => {
+    const { pan, log } = recordingPan();
+    const ctx = context(1);
+    const control = attachMorph(ctx, pan, D_KURD, CELTIC_MINOR);
+
+    const fields = control.setPosition(0);
+    expect(
+      fields.map((field) => field.frequency),
+      "setPosition(0) must report exactly D Kurd's frequencies, or a ringing note would jump the instant the control is first touched",
+    ).toEqual(fieldsFor(D_KURD).map((field) => field.frequency));
+    expect(
+      log.map((entry) => entry.frequency),
+      "every field must actually be retuned to D Kurd, not just reported as such — the retune calls are what a running oscillator hears",
+    ).toEqual(fieldsFor(D_KURD).map((field) => field.frequency));
+    expect(control.position, "the control must report the position it was just set to").toBe(0);
+  });
+
+  it("at position 1 retunes every field to exactly the target scale", () => {
+    const { pan, log } = recordingPan();
+    const ctx = context(1);
+    const control = attachMorph(ctx, pan, D_KURD, CELTIC_MINOR);
+
+    const fields = control.setPosition(1);
+    expect(
+      fields.map((field) => field.frequency),
+      "setPosition(1) must arrive exactly at the target scale, not near it",
+    ).toEqual(fieldsFor(CELTIC_MINOR).map((field) => field.frequency));
+    expect(
+      log.map((entry) => entry.frequency),
+      "every field must actually be retuned to the target scale at the far end of the control",
+    ).toEqual(fieldsFor(CELTIC_MINOR).map((field) => field.frequency));
+  });
+
+  it("clamps a position driven past either end rather than extrapolating", () => {
+    const { pan } = recordingPan();
+    const ctx = context(1);
+    const control = attachMorph(ctx, pan, D_KURD, AMARA);
+
+    expect(control.setPosition(-3).map((f) => f.frequency)).toEqual(
+      fieldsFor(D_KURD).map((f) => f.frequency),
+    );
+    expect(control.position, "a position past the low end must clamp to 0, not go negative").toBe(0);
+
+    expect(control.setPosition(9).map((f) => f.frequency)).toEqual(
+      fieldsFor(AMARA).map((f) => f.frequency),
+    );
+    expect(control.position, "a position past the high end must clamp to 1, not overshoot").toBe(1);
+  });
+
+  it("moves every field monotonically as the position sweeps from 0 to 1", () => {
+    const { pan } = recordingPan();
+    const ctx = context(1);
+    const control = attachMorph(ctx, pan, D_KURD, CELTIC_MINOR);
+
+    // Every field, not just one: a morph that glides one voice smoothly while
+    // lurching another would still sound like a swap on eight of the nine
+    // fields.
+    const previous = fieldsFor(D_KURD).map((f) => f.frequency);
+    for (let t = 0; t <= 1.0001; t += 0.04) {
+      const fields = control.setPosition(t);
+      fields.forEach((field, i) => {
+        expect(
+          field.frequency,
+          `field ${i} must move monotonically toward the target scale as the control sweeps; it fell back at t=${t.toFixed(2)}, which would sound like the pitch wobbling under a ringing note instead of sliding`,
+        ).toBeGreaterThanOrEqual(previous[i] - 1e-9);
+        previous[i] = field.frequency;
+      });
+    }
+  });
+
+  it("glides a ringing note to a new pitch while it is still sounding, instead of cutting it off", async () => {
+    // The one assertion the whole sprint stands or falls on: strike a field,
+    // let it ring, morph the scale mid-decay, and confirm the *rendered audio*
+    // — not just the scale table — actually moved to the new pitch while the
+    // note kept sounding through the change.
+    const index = 3; // D Kurd's 4th field: 10 semitones over the ding.
+    const fromFreq = fieldsFor(D_KURD)[index].frequency;
+    const toFreq = fieldsFor(CELTIC_MINOR)[index].frequency; // 12 semitones — 2 clear semitones away.
+
+    const ctx = context(4);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    pan.strike(index, { velocity: 0.8, position: 0.3 });
+
+    scheduleAt(ctx, 1, () => {
+      const control = attachMorph(ctx, pan, D_KURD, CELTIC_MINOR);
+      control.setPosition(1);
+    });
+
+    const samples = (await ctx.startRendering()).getChannelData(0);
+
+    const before = dominantPitch(sliceOf(samples, 0.55, 0.95), fromFreq - 20, fromFreq + 20);
+    // The morph starts at 1s and STEP_GLIDE_S (0.12s) later the target
+    // frequency has arrived, so 1.2-1.7s is comfortably after the glide
+    // finished and comfortably before the note (which decays faster the
+    // higher its fundamental sits above DECAY_REFERENCE_HZ) has faded away.
+    const after = dominantPitch(sliceOf(samples, 1.2, 1.7), toFreq - 20, toFreq + 20);
+
+    expect(
+      Math.abs(semitonesBetween(fromFreq, before)),
+      `before the morph the ringing note must still sound its original pitch (${fromFreq.toFixed(1)}Hz), but the loudest energy nearby rendered at ${before.toFixed(1)}Hz`,
+    ).toBeLessThan(0.15);
+    expect(
+      Math.abs(semitonesBetween(toFreq, after)),
+      `after the morph the SAME voice must have actually glided to the new pitch (${toFreq.toFixed(1)}Hz) in the rendered audio, not just in the scale table — it rendered at ${after.toFixed(1)}Hz instead`,
+    ).toBeLessThan(0.15);
+
+    // And the decisive half of the claim: it is the same note continuing, not
+    // a fresh strike replacing it — the field must still be clearly sounding
+    // after the morph, with no gap or restart at the moment the pitch moved.
+    expect(
+      peak(sliceOf(samples, 1.2, 1.7)),
+      "the field must still be audibly ringing after the morph — a struck note that goes silent the instant the scale moves has been cut off, not glided",
+    ).toBeGreaterThan(0.02);
+    expect(
+      peak(sliceOf(samples, 0.9, 1.25)),
+      "the moment the morph starts must not itself produce a silent gap or a click — the retune is a frequency ramp on the voice already ringing, not a restart",
+    ).toBeGreaterThan(0.03);
+  });
+
+  it("keeps producing finite, bounded audio when a morph lands mid-phrase with resonance and memory both listening", async () => {
+    // Sprint 3 and sprint 4 both compute their harmonic relationships once,
+    // from the fundamentals the pan was built with (`pan.fields`, frozen at
+    // construction — see engine.ts). A morph never touches that snapshot, only
+    // the oscillators' actual frequencies via `retune()`, so this is an
+    // honest adversarial case: resonance and memory keep reacting throughout
+    // the render using couplings computed for D Kurd, while the fields
+    // underneath them glide toward Celtic minor. This does not assert that
+    // the couplings stay musically correct after the morph — they do not, and
+    // that staleness is a known, reported limitation — only that nothing about
+    // the combination breaks: no runaway strikes, no non-finite sample.
+    const ctx = context(8);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    const memory = attachMemory(pan);
+    attachResonance(pan);
+
+    const strikes: { when: number }[] = [];
+    pan.onStrike(({ when }) => strikes.push({ when }));
+
+    const phraseTimes = [0.1, 0.3, 0.5];
+    scheduleActions(ctx, [
+      ...phraseTimes.map((when) => ({ when, run: () => pan.strike(0, { velocity: 0.8, position: 0.3 }) })),
+      {
+        when: 0.4,
+        run: () => {
+          const control = attachMorph(ctx, pan, D_KURD, CELTIC_MINOR);
+          control.setPosition(1);
+        },
+      },
+      ...pollGrid(7.9).map((when) => ({ when, run: () => memory.tick(when) })),
+    ]);
+    const samples = (await ctx.startRendering()).getChannelData(0);
+
+    const broken = samples.findIndex((sample) => !Number.isFinite(sample));
+    expect(
+      broken,
+      `every sample must stay finite when a morph lands mid-phrase with resonance and memory both active; sample ${broken} was ${samples[broken]}`,
+    ).toBe(-1);
+    expect(
+      peak(samples),
+      "a morph landing mid-phrase must still leave headroom on the bus, not push it toward clipping",
+    ).toBeLessThan(1);
+    expect(
+      strikes.length,
+      "resonance and memory must still be bounded — a stale coupling table is a tuning problem, not a runaway one",
+    ).toBeLessThan(80);
+  }, 30000);
 });

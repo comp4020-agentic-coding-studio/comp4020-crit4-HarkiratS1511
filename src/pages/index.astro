@@ -13,6 +13,38 @@ import { FIELD_KEYS, litness, placement } from "../scripts/ui/layout";
 // it alternating left and right. Both are the instrument's real order.
 const fields = fieldsFor(D_KURD);
 
+// Sprint 5: the scale glides. The control for it is a groove machined into
+// the outer rim, well clear of every tone field — the two lowest fields (see
+// ui/layout.ts's RING_RADIUS and per-field size) reach no further than about
+// 44% of the shell's radius from the centre at any angle, so an arc drawn out
+// at 46% never collides with a crater regardless of where around the pan it
+// runs. It sits low and centred, in front of the player, the way a maker's
+// mark or a tuning detail would sit on real steel.
+//
+// Angles are degrees clockwise from twelve o'clock, the same convention
+// ui/layout.ts uses for the fields, so "180" here means the same thing it
+// means there: the near edge of the pan, closest to the player.
+const TUNE_RADIUS = 46;
+const TUNE_ANGLE_FROM = 130;
+const TUNE_ANGLE_TO = 230;
+
+function arcPoint(angle: number): { x: number; y: number } {
+  const radians = (angle * Math.PI) / 180;
+  return { x: 50 + TUNE_RADIUS * Math.sin(radians), y: 50 - TUNE_RADIUS * Math.cos(radians) };
+}
+
+/** One circular arc, as an SVG path, from the pan's own scale (t=0) to the
+ *  scale it glides toward (t=1). Read left to right, matching the direction
+ *  a native range input already moves in. */
+function tunePath(): string {
+  const start = arcPoint(TUNE_ANGLE_FROM);
+  const end = arcPoint(TUNE_ANGLE_TO);
+  const largeArc = Math.abs(TUNE_ANGLE_TO - TUNE_ANGLE_FROM) > 180 ? 1 : 0;
+  return `M ${start.x.toFixed(3)} ${start.y.toFixed(3)} A ${TUNE_RADIUS} ${TUNE_RADIUS} 0 ${largeArc} 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
+}
+
+const TUNE_PATH = tunePath();
+
 /** Each button carries its own place on the shell, so the layout is data and
  *  the stylesheet only has to know how to draw a crater. */
 function place(index: number): string {
@@ -61,6 +93,25 @@ function place(index: number): string {
           </button>
         ))
       }
+
+      <input
+        class="tune-input"
+        type="range"
+        min="0"
+        max="1"
+        step="0.001"
+        value="0"
+        aria-label="Drift the shell's tuning toward Celtic Minor"
+        data-tune-input
+      />
+      <div class="tune" aria-hidden="true">
+        <svg viewBox="0 0 100 100">
+          <path class="tune-groove" d={TUNE_PATH} />
+          <path class="tune-sheen" d={TUNE_PATH} />
+          <path class="tune-fill" d={TUNE_PATH} pathLength="100" />
+          <path class="tune-hit" d={TUNE_PATH} data-tune-hit />
+        </svg>
+      </div>
     </div>
   </main>
 

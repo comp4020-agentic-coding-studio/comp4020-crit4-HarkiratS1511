@@ -1,7 +1,8 @@
 import { createHandpan } from "./audio/engine";
 import { attachMemory } from "./audio/memory";
+import { attachMorph, type ScaleMorph } from "./audio/morph";
 import { attachResonance } from "./audio/resonance";
-import { D_KURD, fieldsFor } from "./audio/scales";
+import { CELTIC_MINOR, D_KURD, fieldsFor } from "./audio/scales";
 import type { Field, Handpan } from "./audio/types";
 import { createHoldDamper } from "./ui/damp";
 import { bindField, type FieldStrike } from "./ui/field";
@@ -34,6 +35,7 @@ const velocity = new StrikeVelocity();
 let context: AudioContext | null = null;
 let pan: Handpan | null = null;
 let glow: Glow | null = null;
+let morph: ScaleMorph | null = null;
 
 /**
  * A strike made before the audio was allowed to start.
@@ -62,8 +64,8 @@ const held: FieldStrike[] = [];
  * built here, inside the handler for the tap that wants to make the sound. The
  * player never learns that any of this happened.
  */
-function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | null {
-  if (context && pan && glow) return { context, pan, glow };
+function instrument(): { context: AudioContext; pan: Handpan; glow: Glow; morph: ScaleMorph } | null {
+  if (context && pan && glow && morph) return { context, pan, glow, morph };
   if (fields.length === 0) return null;
 
   context = new AudioContext({ latencyHint: "interactive" });
@@ -102,9 +104,14 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | nul
   };
   requestAnimationFrame(tickMemory);
 
+  // Sprint 5: the scale glides. Built on the same Handpan the fields already
+  // strike through, so a morph is nothing more than nine calls to the
+  // retune() this instrument already exposed — see audio/morph.ts.
+  morph = attachMorph(context, pan, D_KURD, CELTIC_MINOR);
+
   // Belt and braces: if the context starts on its own, anything held plays.
   context.addEventListener("statechange", release);
-  return { context, pan, glow };
+  return { context, pan, glow, morph };
 }
 
 /** Ask a blocked context to start, and play whatever was waiting on it. */
@@ -151,6 +158,36 @@ function play(event: FieldStrike): void {
 }
 
 /**
+ * Move the scale glide to `t` (0 = this pan's own D Kurd, 1 = Celtic minor).
+ *
+ * Built the same lazy way `play()` is: the first drag of the control is as
+ * valid a user gesture as the first strike, so it is entitled to build (and
+ * unlock) the instrument on its own rather than requiring a field be struck
+ * first.
+ *
+ * Every field currently ringing keeps sounding, sliding to its new pitch
+ * under whatever envelope it was struck with (attachMorph -> retune(), see
+ * audio/morph.ts) — nothing here stops or restarts a voice. The visible
+ * note on each field is kept in step with what the field actually now
+ * sounds, which is also what keeps its accessible name honest: the stamp
+ * *is* the button's text content, so relabelling it here is enough.
+ */
+function tune(t: number): void {
+  const live = instrument();
+  if (!live) return;
+
+  const fields = live.morph.setPosition(t);
+  shell.style.setProperty("--morph", live.morph.position.toFixed(3));
+  for (const field of fields) {
+    const target = targets.find((candidate) => candidate.index === field.index);
+    const stamp = target?.el.querySelector<HTMLElement>(".stamp");
+    if (stamp) stamp.textContent = field.name;
+  }
+
+  unlock();
+}
+
+/**
  * A palm on the steel. One damper serves every input method, because the
  * gesture it recognises — a press that stays down past a beat — means the
  * same thing regardless of what made it. The instrument always exists by the
@@ -167,6 +204,86 @@ bindPointerStrikes(shell, targets, velocity, play, damper);
 bindKeyStrikes(targets, velocity, play, damper);
 for (const { el, index } of targets) {
   bindField(el, index, velocity, play, damper);
+}
+
+// Sprint 5: the scale-glide control.
+//
+// A real <input type="range"> underneath (index.astro) carries keyboard and
+// assistive-technology support for free — its own "input" event is all that
+// is needed for arrow keys, Home/End and Page Up/Down to work. Dragging it
+// is handled by hand, against the fatter, invisible arc drawn over the same
+// geometry (.tune-hit), because a circular drag is not a gesture a
+// horizontal range input understands on its own; the two paths converge on
+// the same tune(t) and keep the native input's value in step either way, so
+// a player can start dragging with a mouse and finish with the keyboard.
+const tuneInput = document.querySelector<HTMLInputElement>("[data-tune-input]");
+const tuneHit = document.querySelector<SVGPathElement>("[data-tune-hit]");
+
+// Degrees clockwise from twelve o'clock, matching index.astro's TUNE_ANGLE_FROM
+// / TUNE_ANGLE_TO — the two files agree on this arc by convention, the same
+// way this file and ui/layout.ts already agree on which angle each field sits
+// at.
+const TUNE_ANGLE_FROM = 130;
+const TUNE_ANGLE_TO = 230;
+
+/** The clockwise-from-twelve angle, in degrees, from the shell's centre to a
+ *  point on screen — the inverse of index.astro's arcPoint(). */
+function angleFromPointer(clientX: number, clientY: number): number {
+  const rect = shell.getBoundingClientRect();
+  const dx = clientX - (rect.left + rect.width / 2);
+  const dy = clientY - (rect.top + rect.height / 2);
+  const degrees = (Math.atan2(dx, -dy) * 180) / Math.PI;
+  return degrees < 0 ? degrees + 360 : degrees;
+}
+
+/** An angle on the rim, clamped to the control's own arc and rescaled to the
+ *  0..1 the rest of the morph works in — dragging past either end of the
+ *  groove simply holds at that end, the way a real slider's thumb would. */
+function angleToPosition(angle: number): number {
+  const clamped = Math.min(TUNE_ANGLE_TO, Math.max(TUNE_ANGLE_FROM, angle));
+  return (clamped - TUNE_ANGLE_FROM) / (TUNE_ANGLE_TO - TUNE_ANGLE_FROM);
+}
+
+if (tuneInput) {
+  tuneInput.addEventListener("input", () => tune(tuneInput.valueAsNumber));
+}
+
+if (tuneInput && tuneHit) {
+  const dragTo = (clientX: number, clientY: number): void => {
+    const position = angleToPosition(angleFromPointer(clientX, clientY));
+    tuneInput.value = position.toFixed(3);
+    tune(position);
+  };
+
+  // Tracked by hand rather than read back from hasPointerCapture(): capture
+  // is requested for the common case (a fast drag straying off this thin
+  // arc keeps tracking) but is a convenience, not a precondition — some
+  // input paths can leave a pointer uncaptured even though the drag itself
+  // is perfectly real, and a still-real drag should not stop updating.
+  let dragId: number | null = null;
+
+  tuneHit.addEventListener("pointerdown", (event) => {
+    dragId = event.pointerId;
+    try {
+      tuneHit.setPointerCapture(event.pointerId);
+    } catch {
+      /* still drag without capture */
+    }
+    tuneInput.focus({ preventScroll: true });
+    dragTo(event.clientX, event.clientY);
+  });
+
+  tuneHit.addEventListener("pointermove", (event) => {
+    if (event.pointerId === dragId) dragTo(event.clientX, event.clientY);
+  });
+
+  for (const type of ["pointerup", "pointercancel"] as const) {
+    tuneHit.addEventListener(type, (event) => {
+      if (event.pointerId !== dragId) return;
+      dragId = null;
+      if (tuneHit.hasPointerCapture(event.pointerId)) tuneHit.releasePointerCapture(event.pointerId);
+    });
+  }
 }
 
 // The key each field answers to is not printed on the cold-open page — a
