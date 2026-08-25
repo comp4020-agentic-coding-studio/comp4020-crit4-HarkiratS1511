@@ -97,15 +97,22 @@ describe("crit 4: an instrument", () => {
         ).toBe(0);
       });
 
-      it("ships at least one keyboard-focusable control for making sound", () => {
-        const focusable = [...doc.querySelectorAll("button, [tabindex]")].filter(
-          (el) => el.getAttribute("tabindex") !== "-1",
-        );
-        expect(
-          focusable.length,
-          "playable with whatever is at hand includes a keyboard — a real <button> or a tabindex-reachable element is what makes that possible, a bare <div onclick> is not",
-        ).toBeGreaterThan(0);
-      });
+      // Only the page a visitor actually lands on has to be playable — see
+      // "ships the instrument on the page a visitor lands on" below. A second
+      // page that only explains the instrument (about.html) has no field to
+      // strike and is not claiming to; nothing here asks it to fake one.
+      it.skipIf(name !== "index.html")(
+        "ships at least one keyboard-focusable control for making sound",
+        () => {
+          const focusable = [...doc.querySelectorAll("button, [tabindex]")].filter(
+            (el) => el.getAttribute("tabindex") !== "-1",
+          );
+          expect(
+            focusable.length,
+            "playable with whatever is at hand includes a keyboard — a real <button> or a tabindex-reachable element is what makes that possible, a bare <div onclick> is not",
+          ).toBeGreaterThan(0);
+        },
+      );
 
       it("has no score or fail-state UI", () => {
         const text = doc.body?.textContent ?? "";

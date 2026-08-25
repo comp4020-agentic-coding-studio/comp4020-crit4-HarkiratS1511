@@ -45,6 +45,12 @@ function tunePath(): string {
 
 const TUNE_PATH = tunePath();
 
+// Sprint "make the arc legible": the handle's resting place, before any script
+// has run — arcPoint(TUNE_ANGLE_FROM) is also where TUNE_PATH itself starts,
+// so the bead sits exactly on one end of the groove at morph 0 rather than
+// floating somewhere else on first paint.
+const THUMB_START = arcPoint(TUNE_ANGLE_FROM);
+
 /** Each button carries its own place on the shell, so the layout is data and
  *  the stylesheet only has to know how to draw a crater. */
 function place(index: number): string {
@@ -108,16 +114,33 @@ function place(index: number): string {
         <svg viewBox="0 0 100 100">
           <path class="tune-groove" d={TUNE_PATH} />
           <path class="tune-sheen" d={TUNE_PATH} />
+          {/* The track, dimly lit at rest — legible before anyone has found or
+              dragged anything, which the groove alone was not. */}
+          <path class="tune-rail" d={TUNE_PATH} />
           <path class="tune-fill" d={TUNE_PATH} pathLength="100" />
+          {/* The handle: a bead a player can see and aim at even at morph 0,
+              when tune-fill above has nothing left to draw. main.ts moves it
+              along this same arc's own geometry on every update. */}
+          <circle
+            class="tune-thumb"
+            r="2.6"
+            cx={THUMB_START.x.toFixed(3)}
+            cy={THUMB_START.y.toFixed(3)}
+            data-tune-thumb
+          />
           <path class="tune-hit" d={TUNE_PATH} data-tune-hit />
         </svg>
+        {/* Names the control, but only once main.ts has seen data-played —
+            the cold open must stay exactly as wordless as the rest of the
+            pan. Shown on hover, focus or drag; see global.css. */}
+        <span class="tune-label" data-tune-label>Tune</span>
       </div>
     </div>
   </main>
 
   <footer class="colophon">
     <nav aria-label="Primary">
-      <a href="./">Home</a>
+      <a href="./about.html">About</a>
     </nav>
   </footer>
 

@@ -1,0 +1,81 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+// The colophon: a short, plain page behind the nav link for anyone who wants
+// the explanation the instrument itself never gives out loud. The instrument
+// is still the site (index.html is where a visitor lands, per
+// spec/crit-4.test.ts) — this is a second page about it, not a substitute for
+// playing it.
+---
+
+<Layout
+  title="Handpan — about"
+  description="How the browser handpan works: live synthesis, the tuning arc, sympathetic resonance, the phrase memory, the keyboard map, and damping."
+>
+  <header class="masthead">
+    <h1>About the handpan</h1>
+  </header>
+
+  <main class="about">
+    <p>
+      Nine tone fields — a central ding and eight around it — synthesised live from oscillators
+      that never stop running. Nothing on the instrument is a recording; every note is a
+      fundamental, its octave, a compound fifth and some inharmonic shimmer, shaped by how hard
+      and where you land. Because every field is tuned to the same scale, there is no wrong
+      note to strike — any combination of them is intentional.
+    </p>
+
+    <dl>
+      <dt>Strike</dt>
+      <dd>
+        Loudness comes from how fast your hand was moving before it touched the field, not from
+        how hard you press — a mouse click and a firm poke report the same pressure, but not the
+        same speed. Where you land matters too: the centre rings warm and plain, the rim brings
+        out the overtones.
+      </dd>
+
+      <dt>Resonance</dt>
+      <dd>
+        Striking one field quietly excites the neighbours it shares a harmonic relationship
+        with — a fifth, an octave — the way one part of a steel shell answers another. It is
+        audible as a faint undertone and visible as a second, dimmer glow arriving a beat after
+        the one you made.
+      </dd>
+
+      <dt>Memory</dt>
+      <dd>
+        Play three or four notes and stop. After a short pause the shell answers on its own —
+        quieter, shifted to a related note, fading out over a few repeats. Its own strikes glow
+        a cool blue rather than the warm amber of yours, so the two are never mistaken for each
+        other by ear or by eye.
+      </dd>
+
+      <dt>Tuning</dt>
+      <dd>
+        A groove runs low across the rim, in front of the ding. Drag its bead — or tab to it and
+        use the arrow keys — and the whole scale glides from D Kurd toward a Celtic minor
+        tuning while any notes already ringing slide along with it, live.
+      </dd>
+
+      <dt>Keys</dt>
+      <dd>
+        <kbd>b</kbd> <kbd>v</kbd> <kbd>n</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>r</kbd>
+        <kbd>u</kbd> <kbd>4</kbd> <kbd>7</kbd> climb the nine fields in scale order, alternating
+        hands the way the pan's own layout does. Every field is also a plain button, so Tab and
+        Enter reach all nine without the key map.
+      </dd>
+
+      <dt>Damping</dt>
+      <dd>
+        Hold a field down past a beat — with a hand, a finger, or a key — and it mutes like a
+        palm laid on real steel. A quick tap always just rings.
+      </dd>
+    </dl>
+  </main>
+
+  <footer class="colophon">
+    <nav aria-label="Primary">
+      <a href="./index.html">Instrument</a>
+    </nav>
+  </footer>
+</Layout>

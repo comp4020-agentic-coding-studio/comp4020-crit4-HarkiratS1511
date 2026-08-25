@@ -3,7 +3,7 @@ import { attachMemory } from "./audio/memory";
 import { attachMorph, type ScaleMorph } from "./audio/morph";
 import { attachResonance } from "./audio/resonance";
 import { CELTIC_MINOR, D_KURD, fieldsFor } from "./audio/scales";
-import type { Field, Handpan } from "./audio/types";
+import type { Field, Handpan, Strike } from "./audio/types";
 import { createHoldDamper } from "./ui/damp";
 import { bindField, type FieldStrike } from "./ui/field";
 import { createGlow, type Glow } from "./ui/glow";
@@ -32,10 +32,40 @@ const fields: Field[] = fieldsFor(D_KURD).filter((field) => present.has(field.in
 const shell = document.querySelector<HTMLElement>(".shell") ?? document.body;
 const velocity = new StrikeVelocity();
 
+/** The name stamped into the masthead — h1's "D Kurd" is the server-rendered
+ *  default; this is what keeps it honest once the arc has moved. */
+const scaleNameEl = document.querySelector<HTMLElement>(".scale");
+
 let context: AudioContext | null = null;
 let pan: Handpan | null = null;
 let glow: Glow | null = null;
 let morph: ScaleMorph | null = null;
+
+/**
+ * True for the exact duration of a `pan.strike()` call this file made on the
+ * player's behalf — a real tap, a keyboard strike, or one released from
+ * `held` — including every synchronous sympathetic strike that call causes
+ * (resonance.ts only ever re-strikes from inside whichever call is already on
+ * the stack, so it inherits that call's flag). The only other caller of
+ * `pan.strike()` anywhere in this app is memory.ts's `tick()`, which this file
+ * never wraps, so a strike observed with this flag false is, by elimination,
+ * the shell answering on its own. Used below to tag a struck field so the CSS
+ * can light the two differently, without memory.ts or resonance.ts having to
+ * know this distinction exists.
+ */
+let playerStrike = false;
+
+/** Strike a field on the player's behalf, marking the call so the classifier
+ *  below (registered once the instrument exists) can tell it apart from the
+ *  phrase memory answering. */
+function strikeAsPlayer(target: Handpan, index: number, strike: Strike): void {
+  playerStrike = true;
+  try {
+    target.strike(index, strike);
+  } finally {
+    playerStrike = false;
+  }
+}
 
 /**
  * A strike made before the audio was allowed to start.
@@ -89,6 +119,16 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow; morph:
   // itself, so the glow (below) needs no changes to show it.
   attachResonance(pan);
 
+  // Tag every struck field with who is currently making it ring, so the CSS
+  // (see .field[data-source="memory"] in global.css) can light the
+  // instrument's own answers a different colour from the player's, without
+  // memory.ts or resonance.ts ever knowing this distinction exists — see
+  // strikeAsPlayer above for why `playerStrike` is enough to tell them apart.
+  pan.onStrike(({ index }) => {
+    const target = targets.find((candidate) => candidate.index === index);
+    if (target) target.el.dataset.source = playerStrike ? "player" : "memory";
+  });
+
   const clock = context;
   glow = createGlow(targets, pan, () => clock.currentTime);
 
@@ -131,7 +171,7 @@ function release(): void {
   if (!context || !pan || !glow || context.state !== "running") return;
   if (held.length === 0) return;
   const waiting = held.splice(0, held.length);
-  for (const strike of waiting) pan.strike(strike.index, strike.strike);
+  for (const strike of waiting) strikeAsPlayer(pan, strike.index, strike.strike);
   glow.wake();
 }
 
@@ -140,7 +180,7 @@ function play(event: FieldStrike): void {
   if (!live) return;
 
   if (live.context.state === "running") {
-    live.pan.strike(event.index, event.strike);
+    strikeAsPlayer(live.pan, event.index, event.strike);
   } else {
     held.push(event);
     unlock();
@@ -155,6 +195,18 @@ function play(event: FieldStrike): void {
   // The pan breathes until it is first struck. Once it has been, the invitation
   // has been accepted and the movement would only be noise.
   document.body.dataset.played = "true";
+}
+
+/**
+ * What the shell is honestly called right now. D Kurd and Celtic minor at the
+ * two ends; anywhere between them is genuinely between scales, so it is named
+ * as a drift between the two rather than as some third scale that was never
+ * struck into this steel.
+ */
+function scaleLabel(t: number): string {
+  if (t <= 0) return D_KURD.name;
+  if (t >= 1) return CELTIC_MINOR.name;
+  return `${D_KURD.name} → ${CELTIC_MINOR.name}`;
 }
 
 /**
@@ -183,6 +235,10 @@ function tune(t: number): void {
     const stamp = target?.el.querySelector<HTMLElement>(".stamp");
     if (stamp) stamp.textContent = field.name;
   }
+  // The maker's stamp on real steel names one scale; this one glides, so what
+  // it announces has to keep up. Never claims a name for the in-between.
+  if (scaleNameEl) scaleNameEl.textContent = scaleLabel(live.morph.position);
+  positionThumb(live.morph.position);
 
   unlock();
 }
@@ -218,6 +274,31 @@ for (const { el, index } of targets) {
 // a player can start dragging with a mouse and finish with the keyboard.
 const tuneInput = document.querySelector<HTMLInputElement>("[data-tune-input]");
 const tuneHit = document.querySelector<SVGPathElement>("[data-tune-hit]");
+const tuneThumb = document.querySelector<SVGCircleElement>("[data-tune-thumb]");
+
+// The real, on-screen length of the shared arc geometry — not the 100 that
+// .tune-fill's `pathLength` attribute declares for its own dash maths, but
+// what getPointAtLength actually walks. Read once: the path is static.
+const tuneArcLength = tuneHit?.getTotalLength() ?? 0;
+
+/**
+ * Slide the visible handle to the point on the rim that matches morph
+ * position `t`, read straight off the arc's own path data (tuneHit and
+ * tuneFill share the same `d`) rather than recomputed trigonometry — so the
+ * handle can never drift out of step with the groove it rides in. Called
+ * before any gesture has happened at all (t = 0, below) as well as from
+ * every `tune()`, which is what makes the handle visible on the very first
+ * paint instead of only once something has been dragged.
+ */
+function positionThumb(t: number): void {
+  if (!tuneHit || !tuneThumb || tuneArcLength <= 0) return;
+  const clamped = Math.min(1, Math.max(0, t));
+  const point = tuneHit.getPointAtLength(clamped * tuneArcLength);
+  tuneThumb.setAttribute("cx", point.x.toFixed(3));
+  tuneThumb.setAttribute("cy", point.y.toFixed(3));
+}
+
+positionThumb(0);
 
 // Degrees clockwise from twelve o'clock, matching index.astro's TUNE_ANGLE_FROM
 // / TUNE_ANGLE_TO — the two files agree on this arc by convention, the same
@@ -264,6 +345,11 @@ if (tuneInput && tuneHit) {
 
   tuneHit.addEventListener("pointerdown", (event) => {
     dragId = event.pointerId;
+    // Brightens the handle and reveals its label for the duration of the
+    // drag (see .shell.tuning in global.css) — the same "a hand found it"
+    // moment that :hover and :focus-visible already cover for mouse and
+    // keyboard, extended to cover an active touch or pen drag as well.
+    shell.classList.add("tuning");
     try {
       tuneHit.setPointerCapture(event.pointerId);
     } catch {
@@ -281,6 +367,7 @@ if (tuneInput && tuneHit) {
     tuneHit.addEventListener(type, (event) => {
       if (event.pointerId !== dragId) return;
       dragId = null;
+      shell.classList.remove("tuning");
       if (tuneHit.hasPointerCapture(event.pointerId)) tuneHit.releasePointerCapture(event.pointerId);
     });
   }

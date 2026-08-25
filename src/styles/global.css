@@ -23,6 +23,17 @@
   --ink: #8b97a5;
   --ink-bright: #dbe3ea;
 
+  /*
+   * The colour a struck field's own light is made of. Warm ember by default —
+   * a hand landed on steel. `.field[data-source="memory"]` (below) swaps
+   * these three to a cold blue-white instead: the one visual difference
+   * between a note the player played and one the shell is answering with on
+   * its own, so a first-timer can *see* it wasn't them without a word of text.
+   */
+  --tone: var(--ember);
+  --tone-core: 255 228 190;
+  --tone-edge: 255 124 40;
+
   /* Overwritten per field, every frame, from the engine's envelope. */
   --amp: 0;
   --vel: 0.5;
@@ -245,6 +256,7 @@ h1 {
 
 .tune-groove,
 .tune-sheen,
+.tune-rail,
 .tune-fill,
 .tune-hit {
   fill: none;
@@ -252,17 +264,27 @@ h1 {
 }
 
 /* The channel cut into the rim: dark, so it reads as pressed in rather than
-   laid on top — the same inset logic as a tone field's own hollow. */
+   laid on top — the same inset logic as a tone field's own hollow. Widened
+   and darkened slightly from the first cut, which all but disappeared
+   against steel this dark. */
 .tune-groove {
-  stroke: rgb(0 0 0 / 55%);
-  stroke-width: 1.6;
+  stroke: rgb(0 0 0 / 62%);
+  stroke-width: 2.4;
 }
 
 /* A hairline catching the one lamp everything else on the shell answers to. */
 .tune-sheen {
-  stroke: rgb(255 255 255 / 14%);
-  stroke-width: 0.5;
+  stroke: rgb(255 255 255 / 22%);
+  stroke-width: 0.8;
   transform: translate(0.25px, -0.35px);
+}
+
+/* The track, dimly lit for its whole length at rest. Before this the groove
+   only had something to show once dragged past 0 — a player had nothing to
+   see the run of it by, let alone aim at. */
+.tune-rail {
+  stroke: rgb(var(--ember) / 16%);
+  stroke-width: 1.6;
 }
 
 /* The bead of light that has travelled as far into the groove as the morph
@@ -271,13 +293,62 @@ h1 {
    every drag update the same way a strike sets --amp. */
 .tune-fill {
   stroke: rgb(var(--ember) / calc(0.55 + var(--morph, 0) * 0.45));
-  stroke-width: 1.9;
+  stroke-width: 2.1;
   stroke-dasharray: 100;
   stroke-dashoffset: calc(100 - var(--morph, 0) * 100);
   filter: drop-shadow(
     0 0 calc(1px + var(--morph, 0) * 2.5px) rgb(var(--ember) / calc(var(--morph, 0) * 0.85))
   );
   transition: stroke-dashoffset 60ms linear;
+}
+
+/*
+ * The handle. tune-fill above is a progress mark — at morph 0 it has nothing
+ * to draw, which was the whole complaint ("nothing to see or aim at"). This
+ * bead sits on the arc regardless of position, in main.ts's index.astro
+ * markup at rest and moved along the arc's own geometry (getPointAtLength on
+ * .tune-hit, so it can never drift from the groove it rides in) on every
+ * update. Dim at rest, like the rail; brighter the moment a hand finds it.
+ */
+.tune-thumb {
+  pointer-events: none;
+  fill: rgb(var(--ember) / 55%);
+  filter: drop-shadow(0 0 2px rgb(var(--ember) / 45%));
+  transition: fill 160ms ease, filter 160ms ease;
+}
+
+.shell:has(.tune-hit:hover) .tune-thumb,
+.shell:has(.tune-input:focus-visible) .tune-thumb,
+.shell.tuning .tune-thumb {
+  fill: rgb(var(--ember) / 95%);
+  filter: drop-shadow(0 0 4px rgb(var(--ember) / 85%));
+}
+
+/*
+ * Names the control — but only once the cold open's own invitation has
+ * already been accepted (body[data-played]), and only while a hand is
+ * actually finding it. The opening screen stays exactly as wordless as
+ * every other field on the pan.
+ */
+.tune-label {
+  position: absolute;
+  left: 50%;
+  top: 90%;
+  transform: translate(-50%, -50%);
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgb(var(--ember) / 85%);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  white-space: nowrap;
+}
+
+body[data-played] .shell:has(.tune-hit:hover) .tune-label,
+body[data-played] .shell:has(.tune-input:focus-visible) .tune-label,
+body[data-played] .shell.tuning .tune-label {
+  opacity: 1;
 }
 
 /* The generous, invisible hit area a thumb actually finds — much fatter than
@@ -360,7 +431,7 @@ h1 {
 
   /* The bloom: light spilling up out of the hollow onto the shell around it. */
   filter: drop-shadow(
-    0 0 calc(var(--dish) * var(--amp) * 0.75) rgb(var(--ember) / calc(var(--amp) * 0.45))
+    0 0 calc(var(--dish) * var(--amp) * 0.75) rgb(var(--tone) / calc(var(--amp) * 0.45))
   );
 }
 
@@ -426,7 +497,7 @@ h1 {
        the hollow, which is the only thing a hollow can do */
     inset calc(var(--dish) * -0.05) calc(var(--dish) * -0.07)
       calc(var(--dish) * (0.1 + var(--amp) * 0.34)) calc(var(--dish) * -0.02)
-      rgb(var(--ember) / calc(var(--amp) * 0.7)),
+      rgb(var(--tone) / calc(var(--amp) * 0.7)),
     /* the cut where the dimple meets the shell */
     inset 0 0 0 1px rgb(0 0 0 / 34%);
 }
@@ -447,14 +518,64 @@ h1 {
   border-radius: 50%;
   background: radial-gradient(
     circle at 58% 64%,
-    rgb(255 228 190 / 88%) 0%,
-    rgb(var(--ember) / 80%) 22%,
-    rgb(255 124 40 / 46%) 46%,
+    rgb(var(--tone-core) / 88%) 0%,
+    rgb(var(--tone) / 80%) 22%,
+    rgb(var(--tone-edge) / 46%) 46%,
     rgb(0 0 0 / 0%) 68%
   );
   opacity: var(--amp);
   mix-blend-mode: screen;
   pointer-events: none;
+}
+
+/*
+ * The instrument answering itself (memory.ts) rather than a hand on the
+ * steel: a colder hue (the --tone trio, redefined here — see :root), a beat
+ * slower to bloom and fade, and a faint light drifting round the hollow
+ * while it rings. main.ts tags the struck field with data-source; it never
+ * touches memory.ts or resonance.ts to do it — see main.ts for how it tells
+ * the two apart. No text anywhere: the point is that a stranger can *see*
+ * they did not play this note.
+ */
+.field[data-source="memory"] {
+  --tone: 150 205 255;
+  --tone-core: 205 226 255;
+  --tone-edge: 90 140 255;
+  transition: filter 220ms ease-out;
+}
+
+.field[data-source="memory"] .face {
+  transition: box-shadow 240ms ease-out;
+}
+
+.field[data-source="memory"] .face::after {
+  transition: opacity 280ms ease-out;
+}
+
+/* The travelling highlight: only ever as bright as the note itself (opacity
+   is --amp, same as .face::after), so it is invisible between answers and
+   present for exactly as long as one rings. */
+.field[data-source="memory"] .face::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    rgb(205 226 255 / 0%) 0%,
+    rgb(205 226 255 / 34%) 6%,
+    rgb(205 226 255 / 0%) 18%
+  );
+  opacity: var(--amp);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: memory-sweep 2.4s linear infinite;
+}
+
+@keyframes memory-sweep {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Makers stamp the note into the steel. So does this — inside the dish, where
@@ -574,6 +695,56 @@ body:not([data-played]) .face::after {
   }
 }
 
+/* ----------------------------------------------------------------- about  */
+
+/*
+ * The colophon page (about.astro): plain prose, the same dark-steel palette
+ * as the instrument but none of its machinery — a page to be read once, not
+ * an instrument to be played.
+ */
+.about {
+  width: min(90vw, 42rem);
+  margin: 0 auto;
+  padding: clamp(1rem, 4vmin, 2rem) 0 clamp(2rem, 6vmin, 4rem);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+.about p {
+  margin: 0 0 1.4em;
+}
+
+.about dl {
+  margin: 0;
+  display: grid;
+  gap: 1.3em;
+}
+
+.about dt {
+  margin: 0 0 0.3em;
+  font-size: 0.72rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-bright);
+}
+
+.about dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.about kbd {
+  display: inline-block;
+  margin: 0 0.05em;
+  padding: 0.05em 0.45em;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 0.3em;
+  background: var(--steel-dark);
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: 0.85em;
+}
+
 /* ---------------------------------------------------------------- ripple  */
 
 .ripple {
@@ -607,5 +778,9 @@ body:not([data-played]) .face::after {
 
   .field {
     transform: translate(-50%, -50%);
+  }
+
+  .field[data-source="memory"] .face::before {
+    animation: none;
   }
 }
