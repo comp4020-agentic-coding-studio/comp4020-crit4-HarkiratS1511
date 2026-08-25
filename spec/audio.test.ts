@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { createHandpan } from "../src/scripts/audio/engine";
+import { attachResonance } from "../src/scripts/audio/resonance";
 import { AMARA, CELTIC_MINOR, D_KURD, fieldsFor, morph, noteName, transpose } from "../src/scripts/audio/scales";
 import { MODE_RATIOS } from "../src/scripts/audio/types";
 import type { Handpan } from "../src/scripts/audio/types";
@@ -940,4 +941,122 @@ describe("the whole pan", () => {
       "after the hammering stops the pan must still be ringing rather than having collapsed or blown up",
     ).toBeGreaterThan(0);
   }, 60000);
+});
+
+describe("sympathetic resonance", () => {
+  // Sprint 3's claim: striking one field genuinely excites its harmonic
+  // neighbours, quietly, without the chain running away. `attachResonance`
+  // works purely through `Handpan.onStrike` / `strike()`, so these tests use
+  // the same `createHandpan` the page runs, wired up exactly as main.ts
+  // wires it, rather than reaching into resonance.ts's internals.
+  //
+  // `pan.amplitudeAt()` is used for most of this: it is the exact envelope
+  // state the glow reads, so a field reporting a raised amplitude *is* it
+  // being sympathetically excited, independent of and cheaper than rendering
+  // audio. The one test that renders audio (below) exists to prove the whole
+  // chain — engine, resonance and the OfflineAudioContext harness together —
+  // produces real energy at a neighbour's fundamental, not just a raised
+  // number in the envelope model.
+
+  it("excites the ding's octave partner and leaves an unrelated field untouched", () => {
+    const ctx = context(1);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    attachResonance(pan);
+
+    const related = 4; // D4: the ding's exact octave.
+    const dissonant = 3; // C4: no simple ratio to the ding at all.
+
+    pan.strike(0, { velocity: 0.9, position: 0.3 });
+
+    const struckAmp = pan.amplitudeAt(0, 0.05);
+    const relatedAmp = pan.amplitudeAt(related, 0.05);
+    const dissonantAmp = pan.amplitudeAt(dissonant, 0.05);
+
+    expect(
+      relatedAmp,
+      "striking the ding must sympathetically excite D4, its exact octave — this is the physical effect the whole sprint exists to make audible and visible",
+    ).toBeGreaterThan(0.01);
+    expect(
+      dissonantAmp,
+      "a field with no simple ratio to the ding must not be excited at all — it was never struck, sympathetically or otherwise",
+    ).toBe(0);
+    expect(
+      relatedAmp,
+      `a sympathetic strike must land well under the struck field's own level — it came out at ${((relatedAmp / struckAmp) * 100).toFixed(1)}% of the ding's own amplitude, which is too close to a second note rather than resonance`,
+    ).toBeLessThan(struckAmp * 0.2);
+  });
+
+  it("puts real, measurable energy at a harmonically related field's own fundamental when rendered", async () => {
+    // G4 (index 7) is a fourth above the ding. It shares no partial with the
+    // ding's own MODE_RATIOS (1, 2, 3, 5.4, 6.8x the fundamental all land
+    // well clear of a 4/3 ratio), so any energy measured at its fundamental
+    // after striking the ding is resonance, not the ding's own overtones
+    // bleeding into the same frequency bin.
+    const relatedIndex = 7;
+    const g4 = FIELDS[relatedIndex];
+    const strike = { velocity: 0.9, position: 0.3 } as const;
+
+    const withoutResonance = await render(1, (pan) => pan.strike(0, strike));
+
+    const ctx = context(1);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    attachResonance(pan);
+    pan.strike(0, strike);
+    const rendered = (await ctx.startRendering()).getChannelData(0);
+
+    const bleed = magnitudeAt(sliceOf(withoutResonance.samples, 0, 1), g4.frequency);
+    const excited = magnitudeAt(sliceOf(rendered, 0, 1), g4.frequency);
+
+    expect(
+      excited,
+      `striking the ding must put measurably more energy at G4 (${g4.frequency.toFixed(1)}Hz) once sympathetic resonance is wired in than the ding's own overtones alone produce (${bleed.toFixed(5)}) — otherwise the "visible resonance" this sprint promises has no sound behind it`,
+    ).toBeGreaterThan(bleed * 3);
+  });
+
+  it("never lets a sympathetic strike cascade into a second wave of its own", () => {
+    const ctx = context(1);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    attachResonance(pan);
+
+    let notifications = 0;
+    pan.onStrike(() => {
+      notifications += 1;
+    });
+
+    pan.strike(0, { velocity: 0.9, position: 0.3 });
+
+    expect(
+      notifications,
+      "resonance must actually excite at least one neighbour, or the bound checked below is vacuous",
+    ).toBeGreaterThan(1);
+    expect(
+      notifications,
+      `one strike must never produce more notifications than the pan has fields (${FIELDS.length}); ${notifications} means a sympathetic strike is itself exciting further neighbours instead of only sounding`,
+    ).toBeLessThanOrEqual(FIELDS.length);
+  });
+
+  it("stays quiet and finite even when every field is struck at once", async () => {
+    // The adversarial case: nine simultaneous strikes, each capable of
+    // exciting several neighbours, all landing in the same instant. If
+    // sympathetic strikes could re-excite each other this is where a cycle
+    // would show up as runaway energy or a NaN.
+    const ctx = context(2);
+    const pan = createHandpan(ctx, fieldsFor(D_KURD));
+    attachResonance(pan);
+
+    for (let index = 0; index < FIELDS.length; index += 1) {
+      pan.strike(index, { velocity: 1, position: 1 });
+    }
+    const samples = (await ctx.startRendering()).getChannelData(0);
+
+    const broken = samples.findIndex((sample) => !Number.isFinite(sample));
+    expect(
+      broken,
+      `every sample must be finite even with resonance active and all nine fields struck at once; sample ${broken} was ${samples[broken]}`,
+    ).toBe(-1);
+    expect(
+      peak(samples),
+      "the whole pan struck at once, with resonance active, must still leave headroom on the bus rather than pushing it to full scale",
+    ).toBeLessThan(1);
+  });
 });

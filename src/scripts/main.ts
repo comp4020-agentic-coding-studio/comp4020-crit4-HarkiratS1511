@@ -1,4 +1,5 @@
 import { createHandpan } from "./audio/engine";
+import { attachResonance } from "./audio/resonance";
 import { D_KURD, fieldsFor } from "./audio/scales";
 import type { Field, Handpan } from "./audio/types";
 import { createHoldDamper } from "./ui/damp";
@@ -66,6 +67,10 @@ function instrument(): { context: AudioContext; pan: Handpan; glow: Glow } | nul
 
   context = new AudioContext({ latencyHint: "interactive" });
   pan = createHandpan(context, fields);
+  // Sprint 3: sympathetic resonance. Purely a listener on top of the engine's
+  // public contract — it excites related neighbours by calling pan.strike()
+  // itself, so the glow (below) needs no changes to show it.
+  attachResonance(pan);
 
   const clock = context;
   glow = createGlow(targets, pan, () => clock.currentTime);
