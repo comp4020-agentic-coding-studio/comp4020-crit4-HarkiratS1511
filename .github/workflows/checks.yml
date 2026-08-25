@@ -51,7 +51,14 @@ jobs:
         # passes having scanned zero links. The stack skill rewrites the
         # command below when it converts the repo to Astro, and carries the
         # same skip over, so this comment holds either way.
-        run: pnpm dlx linkinator ./dist --silent --skip "^https?://(?!localhost|127)"
+        run: |
+          # serve dist/ under the Pages base path and crawl the URL
+          pnpm preview --port 4989 &
+          base="http://localhost:4989/${GITHUB_REPOSITORY##*/}/"
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null "$base" && break; sleep 1
+          done
+          pnpm dlx linkinator "$base" --recurse --silent --skip "^https?://(?!localhost|127)"
       - name: Scan for committed secrets
         # Pinned, both halves: the SHA fixes the action's script, and `version`
         # fixes the scanner image, which otherwise floats on :latest. These two

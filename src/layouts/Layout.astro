@@ -1,0 +1,33 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  card?: string;
+}
+
+const { title, description, card = "./card.png" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    <!--
+      The link-preview card: public/card.png, 1200x630 --- replace it. The URL
+      resolves against this page, like any link. No og:title/og:description:
+      scrapers fall back to the <title> and description above.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content={card} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
