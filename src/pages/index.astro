@@ -1,23 +1,48 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import { D_KURD, fieldsFor } from "../scripts/audio/scales";
+
+// Sprint 0 is one field, made excellent, before it is multiplied by nine. The
+// field list comes from the same module the audio engine is built from, so the
+// note stamped on the shell and the note that sounds cannot drift apart.
+const fields = fieldsFor(D_KURD).slice(0, 1);
+
+// Where each field sits on the shell, as percentages of it. The ding is the
+// centre of a handpan and of this; sprint 1 replaces this with the alternating
+// spiral the eight tone fields are laid out in, and nothing else has to change
+// — the buttons carry their own geometry as custom properties.
+function place(index: number): string {
+  if (index === 0) return "--fx: 50%; --fy: 50%; --size: 38%;";
+  return "--fx: 50%; --fy: 50%; --size: 24%;";
+}
 ---
 
 <Layout
-  title="COMP4020 prototype"
-  description="Replace this with one sentence saying what this page is. A search result and a link preview both show it."
+  title="Handpan"
+  description="A handpan synthesised live in the browser: struck steel in D Kurd, with the weight of the strike taken from how fast your hand was moving and its colour from where on the field you landed."
 >
-  <header>
+  <header class="masthead">
+    <h1>Handpan <span class="scale">D Kurd</span></h1>
+  </header>
+
+  <main class="stage">
+    <div class="shell">
+      {
+        fields.map((field) => (
+          <button class="field" type="button" data-field={field.index} style={place(field.index)}>
+            <span class="face" aria-hidden="true" />
+            <span class="stamp">{field.name}</span>
+          </button>
+        ))
+      }
+    </div>
+  </main>
+
+  <footer class="colophon">
     <nav aria-label="Primary">
       <a href="./">Home</a>
     </nav>
-  </header>
-  <main>
-    <h1>COMP4020 prototype</h1>
-    <p data-testid="intro">
-      Replace this with your prototype. This week's brief is on the course
-      website; <code>spec/README.md</code> explains how the checks in this repo
-      relate to it.
-    </p>
-  </main>
+  </footer>
+
   <script src="../scripts/main.ts"></script>
 </Layout>
